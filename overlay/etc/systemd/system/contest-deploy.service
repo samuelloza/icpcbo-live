@@ -4,9 +4,7 @@ Description=Contest Runtime - Deploy to local disk on first ISO boot
 DefaultDependencies=no
 After=local-fs.target
 Before=display-manager.service
-# Skip in maintenance modes
-ConditionKernelCommandLine=!contest.uninstall
-ConditionKernelCommandLine=!contest.clean_home
+ConditionKernelCommandLine=!contest.install_mode=full
 
 [Service]
 Type=oneshot

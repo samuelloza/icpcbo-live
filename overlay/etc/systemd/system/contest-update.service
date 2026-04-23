@@ -1,0 +1,15 @@
+[Unit]
+Description=Contest Runtime Auto Update
+After=network-online.target local-fs.target
+Wants=network-online.target
+Before=display-manager.service graphical.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/contest/update.sh
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=multi-user.target

@@ -31,11 +31,16 @@ mount_chroot() {
     local cache_host="${DOWNLOAD_CACHE_DIR:-/work/download-cache}"
     mkdir -p "${cache_host}" "${ROOTFS_DIR}/work/download-cache"
     mount --bind "${cache_host}" "${ROOTFS_DIR}/work/download-cache"
+    # Bind-mount a persistent apt package cache so apt-get install does not
+    # re-download .deb files on every build (survives rm -rf of the work dir).
+    local apt_cache_host="${APT_CACHE_DIR:-/work/apt-cache}"
+    mkdir -p "${apt_cache_host}" "${ROOTFS_DIR}/var/cache/apt/archives"
+    mount --bind "${apt_cache_host}" "${ROOTFS_DIR}/var/cache/apt/archives"
 }
 
 umount_chroot() {
     local mp
-    for mp in work/download-cache run sys proc dev/pts dev; do
+    for mp in var/cache/apt/archives work/download-cache run sys proc dev/pts dev; do
         if mountpoint -q "${ROOTFS_DIR}/${mp}" 2>/dev/null; then
             umount -lf "${ROOTFS_DIR}/${mp}" || true
         fi

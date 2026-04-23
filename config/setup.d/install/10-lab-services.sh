@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Prepares the lab deployment services that run in the live system.
-# - contest-deploy.service    : auto-copies contest files to HDD on first ISO boot
-# - contest-uninstall.service : triggered by 'contest.uninstall=1' kernel param
-# - contest-clean-home.service: triggered by 'contest.clean_home=1' kernel param
+# - contest-full-install.service : full disk install (unsquashfs + GRUB) on contest.install_mode=full
+# - contest-deploy.service       : overlay install (squashfs copy) on first ISO boot
 
 set -euo pipefail
 
+systemctl enable contest-full-install.service
 systemctl enable contest-deploy.service
-systemctl enable contest-uninstall.service
-systemctl enable contest-clean-home.service
+systemctl enable contest-overlay-provision.service
+systemctl enable contest-update.service

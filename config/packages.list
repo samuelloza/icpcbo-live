@@ -46,6 +46,11 @@ console-setup
 efibootmgr
 grub-efi-amd64
 grub-pc-bin
+# Full-install tools (unsquashfs + partitioning)
+squashfs-tools
+parted
+dosfstools
+e2fsprogs
 
 # --- System utilities ---
 net-tools

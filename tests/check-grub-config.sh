@@ -38,14 +38,11 @@ iso_grub="${tmp_dir}/grub.cfg"
 write_runtime_grub_entry "${runtime_grub}"
 write_iso_grub_cfg "${iso_grub}"
 
-boot_persistent_title="${ISO_NAME} - Iniciar el sistema persistente en disco"
-install_persistent_title="${ISO_NAME} - Instalar el sistema persistente en disco"
-clean_home_title="${ISO_NAME} - Limpiar el home de icpcbo"
-uninstall_title="${ISO_NAME} - Eliminar los archivos instalados de icpcbo"
+grub_hdd_ref='${hdd_root}'
 
 expected_runtime_grub="$(cat <<EOF_RUNTIME
 menuentry "${ISO_NAME} (folder mode)" {
-    linux /${CONTEST_DIR}/vmlinuz quiet splash contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=auto
+    linux /${CONTEST_DIR}/vmlinuz quiet splash contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=auto console=tty0 console=ttyS0,115200n8 contest.boot_source=hdd contest_min_ram_mb=${MIN_RAM_MB}
     initrd /${CONTEST_DIR}/initrd.img
 }
 EOF_RUNTIME
@@ -56,37 +53,44 @@ set default=0
 set timeout=30
 set timeout_style=menu
 
-# Detect an already-deployed runtime on any local partition.
-# The marker is only written by deploy.sh — never present on the ISO itself.
-echo "Buscando instalacion en disco local..."
-search --no-floppy --set=hdd_root --file /${CONTEST_DIR}/.contest-installed
+# Consola serial (para virsh console / captura de logs).
+serial --speed=115200 --unit=0 --word=8 --parity=no --stop=1
+terminal_input  serial console
+terminal_output serial console
 
-if [ -n "\${hdd_root}" ]; then
+# Busca sistema instalado en disco (overlay o completo).
+search --no-floppy --set=full_hdd_root --file /${CONTEST_DIR}/.contest-full-installed || true
+search --no-floppy --set=hdd_root --file /${CONTEST_DIR}/.contest-installed || true
 
-    # ── Operacion principal ───────────────────────────────────────────────
-    menuentry "${boot_persistent_title}" {
-        set root=(\${hdd_root})
-        linux /${CONTEST_DIR}/vmlinuz quiet splash contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=on
-        initrd /${CONTEST_DIR}/initrd.img
+if [ -n "\${full_hdd_root}" ]; then
+
+# ── Instalacion completa detectada en disco ───────────────────────────────
+set default=0
+set timeout=15
+    menuentry "Sistema instalado. Retire el USB y reinicie." {
+        echo ""
+        echo "  El sistema ICPC Bolivia ya esta instalado en el disco."
+        echo "  Retire el USB y reinicie para arrancar desde el disco."
+        echo ""
+        echo "  Reiniciando en 10 segundos..."
+        sleep 10
+        reboot
     }
 
-    # ── Mantenimiento ──────────────────────────────────────────────────────
-    menuentry "${clean_home_title}" {
-        set root=(\${hdd_root})
-        linux /${CONTEST_DIR}/vmlinuz quiet contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=on contest.clean_home=1
-        initrd /${CONTEST_DIR}/initrd.img
-    }
+elif [ -n "\${hdd_root}" ]; then
 
-    menuentry "${uninstall_title}" {
-        set root=(\${hdd_root})
-        linux /${CONTEST_DIR}/vmlinuz quiet contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=off contest.uninstall=1
+# ── Arranque persistente desde disco ──────────────────────────────────────
+    menuentry "Iniciar ICPC Bolivia" {
+        set root=(${grub_hdd_ref})
+        linux /${CONTEST_DIR}/vmlinuz quiet splash contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=on console=tty0 console=ttyS0,115200n8 contest.boot_source=hdd contest_min_ram_mb=${MIN_RAM_MB}
         initrd /${CONTEST_DIR}/initrd.img
     }
 
 else
 
-    menuentry "${install_persistent_title}" {
-        linux /${CONTEST_DIR}/vmlinuz quiet splash contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=off
+# ── Instalacion ───────────────────────────────────────────────────────────
+    menuentry "Instalar (modo portable, sin borrar particion)" {
+        linux /${CONTEST_DIR}/vmlinuz contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=off console=tty0 console=ttyS0,115200n8 contest.boot_source=iso contest_min_ram_mb=${MIN_RAM_MB}
         initrd /${CONTEST_DIR}/initrd.img
     }
 

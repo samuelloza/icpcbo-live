@@ -17,18 +17,21 @@ grub_initrd_path() {
 grub_linux_line() {
     local persist_mode="$1"
     local splash_mode="$2"
-    shift 2
+    local boot_source="$3"
+    shift 3
 
     local extra_args=("$@")
 
-    printf 'linux %s quiet' "$(grub_kernel_path)"
+    printf 'linux %s' "$(grub_kernel_path)"
     if [[ "${splash_mode}" == "splash" ]]; then
-        printf ' splash'
+        printf ' quiet splash'
     fi
-    printf ' contest_dir=%s contest_root=%s contest_persist=%s' \
+    printf ' contest_dir=%s contest_root=%s contest_persist=%s console=tty0 console=ttyS0,115200n8' \
         "$(grub_runtime_dir)" \
         "${ROOT_SQUASH_NAME}" \
         "${persist_mode}"
+    printf ' contest.boot_source=%s' "${boot_source}"
+    printf ' contest_min_ram_mb=%s' "${MIN_RAM_MB}"
 
     local arg
     for arg in "${extra_args[@]}"; do
@@ -54,7 +57,26 @@ append_grub_menuentry() {
         fi
 
         printf '        '
-        grub_linux_line "${persist_mode}" "${splash_mode}" "$@"
+        grub_linux_line "${persist_mode}" "${splash_mode}" "${root_mode}" "$@"
+        printf '        initrd %s\n' "$(grub_initrd_path)"
+        echo '    }'
+        echo
+    } >> "${file}"
+}
+
+append_grub_hdd_menuentry() {
+    local file="$1"
+    local title="$2"
+    local root_var="$3"
+    local persist_mode="$4"
+    local splash_mode="$5"
+    shift 5
+
+    {
+        printf '    menuentry "%s" {\n' "${title}"
+        printf '        set root=(${%s})\n' "${root_var}"
+        printf '        '
+        grub_linux_line "${persist_mode}" "${splash_mode}" "hdd" "$@"
         printf '        initrd %s\n' "$(grub_initrd_path)"
         echo '    }'
         echo
@@ -67,7 +89,7 @@ write_runtime_grub_entry() {
     {
         printf 'menuentry "%s (folder mode)" {\n' "${ISO_NAME}"
         printf '    '
-        grub_linux_line "auto" "splash"
+        grub_linux_line "auto" "splash" "hdd"
         printf '    initrd %s\n' "$(grub_initrd_path)"
         echo '}'
     } > "${file}"
@@ -75,64 +97,58 @@ write_runtime_grub_entry() {
 
 write_iso_grub_cfg() {
     local file="$1"
-    local boot_persistent_title="${ISO_NAME} - Iniciar el sistema persistente en disco"
-    local install_persistent_title="${ISO_NAME} - Instalar el sistema persistente en disco"
-    local clean_home_title="${ISO_NAME} - Limpiar el home de icpcbo"
-    local uninstall_title="${ISO_NAME} - Eliminar los archivos instalados de icpcbo"
 
     cat > "${file}" <<EOF
 set default=0
 set timeout=30
 set timeout_style=menu
 
-# Detect an already-deployed runtime on any local partition.
-# The marker is only written by deploy.sh — never present on the ISO itself.
-echo "Buscando instalacion en disco local..."
-search --no-floppy --set=hdd_root --file $(grub_runtime_dir)/.contest-installed
+# Consola serial (para virsh console / captura de logs).
+serial --speed=115200 --unit=0 --word=8 --parity=no --stop=1
+terminal_input  serial console
+terminal_output serial console
 
-if [ -n "\${hdd_root}" ]; then
+# Busca sistema instalado en disco (overlay o completo).
+search --no-floppy --set=full_hdd_root --file $(grub_runtime_dir)/.contest-full-installed || true
+search --no-floppy --set=hdd_root --file $(grub_runtime_dir)/.contest-installed || true
 
-    # ── Operacion principal ───────────────────────────────────────────────
+if [ -n "\${full_hdd_root}" ]; then
+
+# ── Instalacion completa detectada en disco ───────────────────────────────
+set default=0
+set timeout=15
+    menuentry "Sistema instalado. Retire el USB y reinicie." {
+        echo ""
+        echo "  El sistema ICPC Bolivia ya esta instalado en el disco."
+        echo "  Retire el USB y reinicie para arrancar desde el disco."
+        echo ""
+        echo "  Reiniciando en 10 segundos..."
+        sleep 10
+        reboot
+    }
+
+elif [ -n "\${hdd_root}" ]; then
+
+# ── Arranque persistente desde disco ──────────────────────────────────────
 EOF
 
-    append_grub_menuentry \
+    append_grub_hdd_menuentry \
         "${file}" \
-        "${boot_persistent_title}" \
-        "hdd" \
-        "on" \
-        "splash"
+        "Iniciar ICPC Bolivia" \
+        "hdd_root" "on" "splash"
 
     cat >> "${file}" <<'EOF'
-    # ── Mantenimiento ──────────────────────────────────────────────────────
-EOF
-
-    append_grub_menuentry \
-        "${file}" \
-        "${clean_home_title}" \
-        "hdd" \
-        "on" \
-        "plain" \
-        "contest.clean_home=1"
-
-    append_grub_menuentry \
-        "${file}" \
-        "${uninstall_title}" \
-        "hdd" \
-        "off" \
-        "plain" \
-        "contest.uninstall=1"
-
-    cat >> "${file}" <<EOF
 else
 
+# ── Instalacion ───────────────────────────────────────────────────────────
 EOF
 
     append_grub_menuentry \
         "${file}" \
-        "${install_persistent_title}" \
-        "iso" \
-        "off" \
-        "splash"
+        "Instalar (modo portable, sin borrar particion)" \
+        "iso" "off" "plain"
 
-    echo 'fi' >> "${file}"
+    cat >> "${file}" <<'EOF'
+fi
+EOF
 }

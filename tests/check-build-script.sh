@@ -47,6 +47,7 @@ mkdir -p "${ROOTFS_DIR}/tmp"
 
 copy_setup_hooks
 assert_file "${ROOTFS_DIR}/tmp/setup.d/install/01-base-cleanup.sh"
+assert_file "${ROOTFS_DIR}/tmp/setup.d/install/09-full-install-bootstrap-config.sh"
 assert_file "${ROOTFS_DIR}/tmp/setup.d/finalize/10-apt-policy.sh"
 assert_file "${ROOTFS_DIR}/tmp/setup.d/prepare/10-initramfs.sh"
 
@@ -136,6 +137,7 @@ phase_install_and_customize() { echo "phase_install_and_customize" >> "${phase_l
 phase_trim() { echo "phase_trim" >> "${phase_log}"; }
 phase_pack_runtime() { echo "phase_pack_runtime" >> "${phase_log}"; }
 phase_build_iso() { echo "phase_build_iso" >> "${phase_log}"; }
+phase_publish_update() { echo "phase_publish_update" >> "${phase_log}"; }
 
 main
 
@@ -152,19 +154,42 @@ EOF
 build_runtime() { echo "build_runtime" >> "${target_log}"; }
 main() { echo "main" >> "${target_log}"; }
 phase_generate_grub_preview() { echo "phase_generate_grub_preview" >> "${target_log}"; }
+phase_publish_update() { echo "phase_publish_update" >> "${target_log}"; }
 print_usage() { echo "print_usage" >> "${target_log}"; }
 
 run_build_target runtime
+run_build_target publish-update
 run_build_target grub-preview
 run_build_target help
 run_build_target full
 
 assert_equals "$(cat <<'EOF'
 build_runtime
+build_runtime
+phase_publish_update
 phase_generate_grub_preview
 print_usage
 main
 EOF
 )" "$(cat "${target_log}")" "run_build_target dispatch"
+
+. "${PROJECT_DIR}/scripts/build.sh"
+
+UPDATES_DIR="${tmp_dir}/updates"
+RUNTIME_DIR="${tmp_dir}/runtime"
+mkdir -p "${RUNTIME_DIR}/${CONTEST_DIR}"
+printf 'kernel' > "${RUNTIME_DIR}/${CONTEST_DIR}/vmlinuz"
+printf 'initrd' > "${RUNTIME_DIR}/${CONTEST_DIR}/initrd.img"
+printf 'sqfs' > "${RUNTIME_DIR}/${CONTEST_DIR}/${ROOT_SQUASH_NAME}"
+printf 'grub-entry' > "${RUNTIME_DIR}/${CONTEST_DIR}/grub-entry.cfg"
+RUNTIME_VERSION="20260421010101"
+
+phase_publish_update
+
+assert_file "${UPDATES_DIR}/manifest.json"
+assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/vmlinuz"
+assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/initrd.img"
+assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/${ROOT_SQUASH_NAME}"
+assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/grub-entry.cfg"
 
 echo "PASS: build.sh preserves helper staging and phase orchestration order."

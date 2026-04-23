@@ -1,16 +1,18 @@
-# Optional overrides (copy to iso.local.conf)
+#!/usr/bin/env bash
 
-# ISO_NAME="icpc-bolivia-debian"
-# DEBIAN_SUITE="trixie"
-# DEBIAN_MIRROR="http://deb.debian.org/debian"
-# DEBIAN_SECURITY_MIRROR="http://security.debian.org/debian-security"
-# DEBIAN_COMPONENTS="main contrib non-free non-free-firmware"
-# META_DISTRO_ID="icpc-bolivia-debian"
-# META_DISTRO_NAME="ICPC Bolivia Debian"
-# META_DISTRO_VERSION="13"
-# DEFAULT_USER="icpc"
-# DEFAULT_PASSWORD="change-me"
-# HOSTNAME="contest"
-# TIMEZONE="UTC"
-# APT_PROXY="http://apt-cacher:3142"
-# APT_PROXY=""  # disable proxy
+# Copy this file to config/iso.local.conf and set your production values.
+# Expose remote/full-install.sh with:
+#   docker compose up -d iso-local-conf-viewer
+# Then replace REPLACE_WITH_HOST_IP with the host address reachable by the ISO.
+
+FULL_INSTALL_URL="http://localhost:8081/remote/full-install-bootstrap.sh"
+# Leave empty during local testing to skip remote installer SHA validation.
+FULL_INSTALL_SHA256="8c607364fdb168563e6ec07486725746c82ffb5ff7ae453913c03565fe0f2cc0"
+UPDATE_MANIFEST_URL="http://localhost:8081/updates/manifest.json"
+UPDATE_CHECK_ON_BOOT="true"
+RUNTIME_VERSION="dev"
+
+# Optional local overrides
+# DEFAULT_BROWSER_URL="https://global.naquadah.com.br/boca"
+# GNOME_INPUT_SOURCES="[('xkb', 'latam'), ('xkb', 'br'), ('xkb', 'us')]"
+# MIN_RAM_MB="8192"

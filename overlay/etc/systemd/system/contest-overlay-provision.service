@@ -1,0 +1,15 @@
+[Unit]
+Description=Contest Runtime - Provision overlay.img for folder mode
+After=local-fs.target
+Before=display-manager.service
+ConditionKernelCommandLine=!contest.install_mode=full
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/contest/provision-overlay.sh
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

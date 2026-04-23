@@ -32,11 +32,14 @@ assert_equals "/contest" "$(normalize_contest_dir contest)" "normalize_contest_d
 assert_equals "/contest" "$(normalize_contest_dir /contest)" "normalize_contest_dir absolute"
 
 assert_equals "ro,nls=utf8" "$(mount_opts_for_fstype ntfs ro)" "mount_opts_for_fstype ntfs ro"
-assert_equals "rw,nls=utf8" "$(mount_opts_for_fstype ntfs3 rw)" "mount_opts_for_fstype ntfs3 rw"
+assert_equals "rw" "$(mount_opts_for_fstype ntfs3 rw)" "mount_opts_for_fstype ntfs3 rw"
 assert_equals "rw" "$(mount_opts_for_fstype ext4 rw)" "mount_opts_for_fstype ext4 rw"
 
 assert_equals "0" "$(overlay_storage_mb_for_fstype ext4 4096)" "overlay_storage_mb_for_fstype ext4"
 assert_equals "4096" "$(overlay_storage_mb_for_fstype ntfs 4096)" "overlay_storage_mb_for_fstype ntfs"
+assert_equals "4096" "$(overlay_storage_mb_for_fstype exfat 4096)" "overlay_storage_mb_for_fstype exfat"
+assert_equals "3072" "$(overlay_img_size_mb_for_fstype vfat 4096)" "overlay_img_size_mb_for_fstype vfat"
+assert_equals "4096" "$(overlay_img_size_mb_for_fstype ntfs 4096)" "overlay_img_size_mb_for_fstype ntfs"
 
 marker_contents="$(
     cat <<'EOF'

@@ -26,6 +26,16 @@ elif [[ ! -e "${OUTPUT_DIR}" && ! -w "$(dirname "${OUTPUT_DIR}")" ]]; then
     OUTPUT_DIR="${PROJECT_DIR}/output-local"
 fi
 
+if [[ "${UPDATES_DIR}" == /work/* ]] && { [[ ! -d /work ]] || [[ ! -w /work ]]; }; then
+    UPDATES_DIR="${PROJECT_DIR}/updates"
+fi
+
+if [[ -e "${UPDATES_DIR}" && ! -w "${UPDATES_DIR}" ]]; then
+    UPDATES_DIR="${PROJECT_DIR}/updates-local"
+elif [[ ! -e "${UPDATES_DIR}" && ! -w "$(dirname "${UPDATES_DIR}")" ]]; then
+    UPDATES_DIR="${PROJECT_DIR}/updates-local"
+fi
+
 DOWNLOAD_CACHE_DIR="${DOWNLOAD_CACHE_DIR:-/work/download-cache}"
 if [[ "${DOWNLOAD_CACHE_DIR}" == /work/* ]] && { [[ ! -d /work ]] || [[ ! -w /work ]]; }; then
     DOWNLOAD_CACHE_DIR="${PROJECT_DIR}/download_cache"
@@ -122,7 +132,11 @@ phase_prepare() {
 phase_bootstrap() {
     phase "10 Bootstrap Debian (${DEBIAN_SUITE})"
 
-    debootstrap --arch="${ARCH}" --variant=minbase \
+    local debootstrap_env=()
+    if [[ -n "${APT_PROXY:-}" ]]; then
+        debootstrap_env=(env http_proxy="${APT_PROXY}" https_proxy="${APT_PROXY}")
+    fi
+    "${debootstrap_env[@]}" debootstrap --arch="${ARCH}" --variant=minbase \
         "${DEBIAN_SUITE}" "${ROOTFS_DIR}" "${DEBIAN_MIRROR}"
 
     cat > "${ROOTFS_DIR}/etc/apt/sources.list" <<APT
@@ -156,9 +170,17 @@ phase_install_and_customize() {
         DEFAULT_USER="${DEFAULT_USER}" \
         DEFAULT_PASSWORD="${DEFAULT_PASSWORD}" \
         ENABLE_AUTOLOGIN="${ENABLE_AUTOLOGIN}" \
+        DEFAULT_BROWSER_URL="${DEFAULT_BROWSER_URL}" \
+        GNOME_INPUT_SOURCES="${GNOME_INPUT_SOURCES}" \
+        MIN_RAM_MB="${MIN_RAM_MB}" \
         META_DISTRO_ID="${META_DISTRO_ID}" \
         META_DISTRO_NAME="${META_DISTRO_NAME}" \
         META_DISTRO_VERSION="${META_DISTRO_VERSION}" \
+        FULL_INSTALL_URL="${FULL_INSTALL_URL}" \
+        FULL_INSTALL_SHA256="${FULL_INSTALL_SHA256}" \
+        UPDATE_MANIFEST_URL="${UPDATE_MANIFEST_URL}" \
+        UPDATE_CHECK_ON_BOOT="${UPDATE_CHECK_ON_BOOT}" \
+        RUNTIME_VERSION="${RUNTIME_VERSION}" \
         DOWNLOAD_CACHE_DIR=/work/download-cache
 }
 
@@ -303,6 +325,75 @@ phase_build_iso() {
     log "SHA256:   ${iso_file}.sha256"
 }
 
+publish_runtime_version() {
+    if [[ -n "${RUNTIME_VERSION:-}" && "${RUNTIME_VERSION}" != "dev" ]]; then
+        printf '%s\n' "${RUNTIME_VERSION}"
+    else
+        date -u +%Y%m%d%H%M%S
+    fi
+}
+
+phase_publish_update() {
+    phase "60 Publish Runtime Update"
+
+    local runtime_target="${RUNTIME_DIR}/${CONTEST_DIR}"
+    local version updates_root artifact_dir manifest_file
+    local kernel_source="${runtime_target}/vmlinuz"
+    local initrd_source="${runtime_target}/initrd.img"
+    local squashfs_source="${runtime_target}/${ROOT_SQUASH_NAME}"
+    local grub_entry_source="${runtime_target}/grub-entry.cfg"
+
+    [[ -f "${kernel_source}" ]] || die "Missing runtime kernel: ${kernel_source}"
+    [[ -f "${initrd_source}" ]] || die "Missing runtime initrd: ${initrd_source}"
+    [[ -f "${squashfs_source}" ]] || die "Missing runtime squashfs: ${squashfs_source}"
+    [[ -f "${grub_entry_source}" ]] || die "Missing runtime grub-entry: ${grub_entry_source}"
+
+    updates_root="${UPDATES_DIR}"
+    version="$(publish_runtime_version)"
+    artifact_dir="${updates_root}/artifacts/${version}"
+    manifest_file="${updates_root}/manifest.json"
+
+    mkdir -p "${artifact_dir}"
+    cp -a "${kernel_source}" "${artifact_dir}/vmlinuz"
+    cp -a "${initrd_source}" "${artifact_dir}/initrd.img"
+    cp -a "${squashfs_source}" "${artifact_dir}/${ROOT_SQUASH_NAME}"
+    cp -a "${grub_entry_source}" "${artifact_dir}/grub-entry.cfg"
+
+    local vmlinuz_sha initrd_sha squashfs_sha grub_entry_sha
+    vmlinuz_sha="$(sha256sum "${artifact_dir}/vmlinuz" | awk '{print $1}')"
+    initrd_sha="$(sha256sum "${artifact_dir}/initrd.img" | awk '{print $1}')"
+    squashfs_sha="$(sha256sum "${artifact_dir}/${ROOT_SQUASH_NAME}" | awk '{print $1}')"
+    grub_entry_sha="$(sha256sum "${artifact_dir}/grub-entry.cfg" | awk '{print $1}')"
+
+    cat > "${manifest_file}" <<EOF
+{
+  "version": "${version}",
+  "artifacts": {
+    "vmlinuz": {
+      "url": "artifacts/${version}/vmlinuz",
+      "sha256": "${vmlinuz_sha}"
+    },
+    "initrd_img": {
+      "url": "artifacts/${version}/initrd.img",
+      "sha256": "${initrd_sha}"
+    },
+    "filesystem_squashfs": {
+      "url": "artifacts/${version}/${ROOT_SQUASH_NAME}",
+      "sha256": "${squashfs_sha}"
+    },
+    "grub_entry_cfg": {
+      "url": "artifacts/${version}/grub-entry.cfg",
+      "sha256": "${grub_entry_sha}"
+    }
+  }
+}
+EOF
+
+    log "Update version: ${version}"
+    log "Update dir:     ${artifact_dir}"
+    log "Manifest:       ${manifest_file}"
+}
+
 build_runtime() {
     phase_prepare
     phase_bootstrap
@@ -318,11 +409,12 @@ main() {
 
 print_usage() {
     cat <<EOF
-Usage: $(basename "$0") [full|runtime|grub-preview|help]
+Usage: $(basename "$0") [full|runtime|publish-update|grub-preview|help]
 
 Targets:
   full          Build completo (default)
   runtime       Construye hasta runtime/ + grub-entry.cfg
+  publish-update Construye runtime y publica artifacts + manifest en updates/
   grub-preview  Genera grub.cfg + grub-entry.cfg + ISO preview booteable
   help          Muestra esta ayuda
 EOF
@@ -337,6 +429,10 @@ run_build_target() {
             ;;
         runtime)
             build_runtime
+            ;;
+        publish-update|update|publish)
+            build_runtime
+            phase_publish_update
             ;;
         grub-preview|grub|preview-grub)
             phase_generate_grub_preview

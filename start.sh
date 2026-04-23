@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_SCRIPT="${PROJECT_DIR}/scripts/build.sh"
 
@@ -11,6 +12,16 @@ if [[ -f "${PROJECT_DIR}/config/iso.local.conf" ]]; then
     # shellcheck source=/dev/null
     source "${PROJECT_DIR}/config/iso.local.conf"
 fi
+
+run_as_host_user() {
+    sudo -u "${SUDO_USER:-${USER}}" "$@"
+}
+
+ensure_root() {
+    [[ "${EUID}" -eq 0 ]] && return 0
+    echo "[start.sh] Se requiere root. Ejecutando con sudo..."
+    exec sudo -E bash "${BASH_SOURCE[0]}" "$@"
+}
 
 resolve_output_dir() {
     local output_dir="${OUTPUT_DIR}"
@@ -30,25 +41,15 @@ resolve_output_dir() {
 
 latest_iso_path() {
     local output_dir="${1:?missing output dir}"
-
-    find "${output_dir}" -maxdepth 1 -type f -name '*.iso' -printf '%T@ %p\n' 2>/dev/null \
-        | sort -nr \
-        | head -n1 \
-        | cut -d' ' -f2-
-}
-
-latest_full_iso_path() {
-    local output_dir="${1:?missing output dir}"
-
     find "${output_dir}" -maxdepth 1 -type f -name '*.iso' ! -name '*-grub-preview.iso' -printf '%T@ %p\n' 2>/dev/null \
         | sort -nr \
         | head -n1 \
-        | cut -d' ' -f2-
+        | cut -d' ' -f2- \
+        || true
 }
 
 preview_iso_path() {
     local output_dir="${1:?missing output dir}"
-
     printf '%s/%s-grub-preview.iso\n' "${output_dir}" "${ISO_NAME}"
 }
 
@@ -61,17 +62,9 @@ print_grub_preview_hint() {
 
     preview_iso="$(latest_iso_path "${output_dir}")"
 
-    if [[ -f "${iso_grub}" || -f "${runtime_grub}" ]]; then
-        echo "GRUB preview detected:" >&2
-        [[ -f "${iso_grub}" ]] && echo "  - ${iso_grub}" >&2
-        [[ -f "${runtime_grub}" ]] && echo "  - ${runtime_grub}" >&2
-        if [[ -n "${preview_iso}" && -f "${preview_iso}" ]]; then
-            echo "  - ${preview_iso}" >&2
-            echo "Use 'bash start.sh latest-preview' or the interactive menu to boot it." >&2
-        else
-            echo "Generate it with 'bash ${BUILD_SCRIPT} grub-preview' or the interactive menu." >&2
-        fi
-    fi
+    [[ -f "${iso_grub}" ]] && echo "GRUB preview: ${iso_grub}" >&2
+    [[ -f "${runtime_grub}" ]] && echo "GRUB runtime: ${runtime_grub}" >&2
+    [[ -n "${preview_iso}" && -f "${preview_iso}" ]] && echo "ISO preview:  ${preview_iso}" >&2
 }
 
 show_grub_preview() {
@@ -81,7 +74,7 @@ show_grub_preview() {
     local runtime_grub="${preview_dir}/${CONTEST_DIR}/grub-entry.cfg"
 
     [[ -f "${iso_grub}" || -f "${runtime_grub}" ]] || {
-        echo "No GRUB preview found in ${preview_dir}" >&2
+        echo "No hay preview de GRUB en ${preview_dir}" >&2
         return 1
     }
 
@@ -97,117 +90,53 @@ show_grub_preview() {
     fi
 }
 
-VM_NAME="${VM_NAME:-icpc-bolivia-debian}"
-RAM_MB="${RAM_MB:-6048}"
-VCPUS="${VCPUS:-2}"
 DISK_SIZE_GB="${DISK_SIZE_GB:-20}"
-DISK_PATH="${DISK_PATH:-/var/lib/libvirt/images/${VM_NAME}.qcow2}"
+VM_NAME="icpc-bolivia-debian"
+LAB_DISK_PATH="/var/lib/libvirt/images/icpc-bolivia-debian-lab-hdd.qcow2"
+WIN_XP_DISK="${PROJECT_DIR}/Windows XP.qcow2"
+WIN_XP_VM_NAME="icpc-winxp-lab"
+
 OUTPUT_DIR_RESOLVED="$(resolve_output_dir)"
-ISO_PATH="${ISO_PATH:-$(latest_iso_path "${OUTPUT_DIR_RESOLVED}")}"
-WIFI_HOSTDEV="${WIFI_HOSTDEV:-}"
-OS_VARIANT="${OS_VARIANT:-debian13}"
+ISO_PATH="${ISO_PATH:-$(latest_iso_path "${OUTPUT_DIR_RESOLVED}")}" 
 
-# ----------------------------------------------------------------
-# Lab simulation mode  (LAB_SIM=1)
-#
-# Simulates a lab machine with Windows/Linux on HDD + the contest ISO in the drive.
-# The ISO's GRUB is the only bootloader — it auto-detects the deployment state:
-#
-#   First boot:    GRUB shows "Instalar el sistema persistente en disco"
-#                  → deploy.sh copies files to HDD, creates overlay.img if needed
-#
-#   Later boots:   GRUB shows 3 options:
-#                  - "Iniciar el sistema persistente en disco"  ← default
-#                  - "Limpiar el home de icpcbo"
-#                  - "Eliminar los archivos instalados de icpcbo"
-#
-# To start over (simulate a fresh machine):
-#   sudo rm /var/lib/libvirt/images/icpc-bolivia-debian-lab-hdd.qcow2
-#
-# ----------------------------------------------------------------
-LAB_SIM="${LAB_SIM:-0}"
-LAB_DISK_PATH="${LAB_DISK_PATH:-/var/lib/libvirt/images/${VM_NAME}-lab-hdd.qcow2}"
+create_lab_disk() {
+    local disk_path="${1:-${LAB_DISK_PATH}}"
+    local size_gb="${2:-12}"
 
-launch_vm() {
-    local selected_iso="${1:?missing ISO path}"
-    HOSTDEV_ARGS=()
-    if [[ -n "${WIFI_HOSTDEV}" ]]; then
-        HOSTDEV_ARGS=(--hostdev "${WIFI_HOSTDEV}")
+    if [[ -f "${disk_path}" ]]; then
+        echo "Ya existe un disco en ${disk_path}"
+        read -r -p "Sobreescribir? [s/N]: " confirm
+        [[ "${confirm}" =~ ^[sS]$ ]] || return 0
+        rm -f "${disk_path}"
     fi
 
-    # ----------------------------------------------------------------
-    # Prepare lab HDD image (created once, reused across reboots)
-    # ----------------------------------------------------------------
-    if [[ "${LAB_SIM}" == "1" ]]; then
-        if [[ ! -f "${LAB_DISK_PATH}" ]]; then
-            echo "LAB_SIM: creating HDD image: ${LAB_DISK_PATH}"
-            sudo qemu-img create -f qcow2 "${LAB_DISK_PATH}" "${DISK_SIZE_GB}G"
+    command -v guestfish >/dev/null 2>&1 || {
+        echo "ERROR: guestfish no encontrado. Instalá: sudo apt install libguestfs-tools" >&2
+        return 1
+    }
 
-            # Partition + format as ext4 so deploy.sh finds it immediately.
-            # Requires: sudo apt install libguestfs-tools
-            if command -v guestfish >/dev/null 2>&1; then
-                sudo guestfish -a "${LAB_DISK_PATH}" <<'GUESTFISH'
+    echo "Creando disco NTFS vacío (${size_gb} GB): ${disk_path}"
+    qemu-img create -f qcow2 "${disk_path}" "${size_gb}G"
+
+    guestfish -a "${disk_path}" <<'GUESTFISH'
 run
 part-init /dev/sda mbr
 part-add /dev/sda p 2048 -1
-mkfs ext4 /dev/sda1
+mkfs ntfs /dev/sda1
 GUESTFISH
-                echo "LAB_SIM: HDD partitioned and formatted (ext4 on /dev/vda1)"
-            else
-                echo "ERROR: guestfish not found. Install: sudo apt install libguestfs-tools" >&2
-                sudo rm -f "${LAB_DISK_PATH}"
-                return 1
-            fi
-        else
-            echo "LAB_SIM: reusing HDD image: ${LAB_DISK_PATH}"
-        fi
-    fi
+}
 
-    # ----------------------------------------------------------------
-    # Destroy any previous VM instance
-    # ----------------------------------------------------------------
-    sudo virsh destroy "${VM_NAME}" 2>/dev/null || true
-    sudo virsh undefine "${VM_NAME}" 2>/dev/null || true
+reset_vm() {
+    local name="$1"
+    virsh destroy "${name}" 2>/dev/null || true
+    virsh undefine "${name}" 2>/dev/null || true
+}
 
-    # ----------------------------------------------------------------
-    # Launch VM
-    # ----------------------------------------------------------------
-    if [[ "${LAB_SIM}" == "1" ]]; then
-        # ISO always present (it's the bootloader source).
-        # HDD attached as secondary disk — deploy.sh writes contest files there.
-        # boot order: cdrom first so the ISO GRUB always loads.
-        echo "LAB_SIM: starting VM  (ISO: $(basename "${selected_iso}")  HDD: $(basename "${LAB_DISK_PATH}"))"
-        sudo virt-install \
-            --connect qemu:///system \
-            --name "${VM_NAME}" \
-            --ram "${RAM_MB}" \
-            --vcpus "${VCPUS}" \
-            --disk "path=${LAB_DISK_PATH},format=qcow2,bus=virtio" \
-            --os-variant "${OS_VARIANT}" \
-            --cdrom "${selected_iso}" \
-            --network network=default \
-            --graphics spice \
-            --video virtio \
-            --boot cdrom,hd \
-            --cpu host-model \
-            "${HOSTDEV_ARGS[@]}"
+ensure_lab_disk() {
+    if [[ ! -f "${LAB_DISK_PATH}" ]]; then
+        create_lab_disk "${LAB_DISK_PATH}" "${DISK_SIZE_GB}"
     else
-        # Normal mode: ephemeral disk, no HDD simulation.
-        sudo rm -f "${DISK_PATH}"
-        sudo virt-install \
-            --connect qemu:///system \
-            --name "${VM_NAME}" \
-            --ram "${RAM_MB}" \
-            --vcpus "${VCPUS}" \
-            --disk "path=${DISK_PATH},size=${DISK_SIZE_GB},format=qcow2" \
-            --os-variant "${OS_VARIANT}" \
-            --cdrom "${selected_iso}" \
-            --network network=default \
-            --graphics spice \
-            --video virtio \
-            --boot cdrom,hd \
-            --cpu host-model \
-            "${HOSTDEV_ARGS[@]}"
+        echo "Disco lab: ${LAB_DISK_PATH}  ($(qemu-img info "${LAB_DISK_PATH}" | grep 'virtual size' | awk '{print $3, $4}'))"
     fi
 }
 
@@ -215,65 +144,169 @@ require_iso() {
     local selected_iso="${1-}"
 
     if [[ -z "${selected_iso}" || ! -f "${selected_iso}" ]]; then
-        echo "ISO not found. Set ISO_PATH or build one first (output is at ${OUTPUT_DIR_RESOLVED})" >&2
+        echo "ISO no encontrado. Genera uno primero en ${OUTPUT_DIR_RESOLVED}" >&2
         print_grub_preview_hint "${OUTPUT_DIR_RESOLVED}"
         return 1
     fi
 }
 
+launch_vm() {
+    local selected_iso="${1:?missing ISO path}"
+    local wipe_lab_disk="${2:-0}"
+
+    if [[ "${wipe_lab_disk}" == "1" && -f "${LAB_DISK_PATH}" ]]; then
+        echo "Borrando disco lab: ${LAB_DISK_PATH}"
+        rm -f "${LAB_DISK_PATH}"
+    fi
+
+    ensure_lab_disk
+    reset_vm "${VM_NAME}"
+
+    echo "Iniciando VM  ISO: $(basename "${selected_iso}")  HDD: $(basename "${LAB_DISK_PATH}")"
+    virt-install \
+        --connect qemu:///system \
+        --name "${VM_NAME}" \
+        --ram 6048 \
+        --vcpus 2 \
+        --disk "path=${LAB_DISK_PATH},format=qcow2,bus=virtio" \
+        --os-variant debian13 \
+        --cdrom "${selected_iso}" \
+        --network network=default \
+        --graphics spice \
+        --video virtio \
+        --serial pty \
+        --boot cdrom,hd,menu=on \
+        --cpu host-model
+}
+
+launch_winxp() {
+    local with_iso="${1:-0}"
+    local selected_iso="${2:-}"
+    local extra_args=()
+
+    [[ -f "${WIN_XP_DISK}" ]] || {
+        echo "ERROR: disco Windows XP no encontrado: ${WIN_XP_DISK}" >&2
+        return 1
+    }
+
+    chmod o+x "$(dirname "${WIN_XP_DISK}")" 2>/dev/null || true
+    reset_vm "${WIN_XP_VM_NAME}"
+    ensure_lab_disk
+
+    if [[ "${with_iso}" == "1" ]]; then
+        require_iso "${selected_iso}"
+        echo "ISO contest: ${selected_iso}"
+        extra_args=(--cdrom "${selected_iso}" --boot cdrom,hd,menu=on)
+    else
+        extra_args=(--boot hd,menu=on)
+    fi
+
+    virt-install \
+        --connect qemu:///system \
+        --name "${WIN_XP_VM_NAME}" \
+        --ram 6048 \
+        --vcpus 2 \
+        --import \
+        --disk "path=${WIN_XP_DISK},format=qcow2,bus=ide" \
+        --disk "path=${LAB_DISK_PATH},format=qcow2,bus=ide" \
+        --os-variant winxp \
+        --network network=default \
+        --graphics spice \
+        --video vga \
+        "${extra_args[@]}"
+}
+
+start_apt_cacher() {
+    if curl -s --max-time 2 http://localhost:3142 >/dev/null 2>&1; then
+        echo "[apt-cacher] Caché ya activo"
+        export APT_PROXY="http://localhost:3142"
+        return 0
+    fi
+
+    echo "[apt-cacher] Iniciando caché apt..."
+    run_as_host_user docker compose -f "${PROJECT_DIR}/docker-compose.yml" up -d apt-cacher >/dev/null 2>&1 || {
+        echo "[apt-cacher] WARN: no se pudo iniciar el caché" >&2
+        return 0
+    }
+
+    local i=0
+    echo -n "[apt-cacher] Esperando"
+    while ! curl -s --max-time 1 http://localhost:3142 >/dev/null 2>&1; do
+        sleep 1
+        i=$(( i + 1 ))
+        echo -n "."
+        [[ "${i}" -ge 20 ]] && { echo " timeout"; return 0; }
+    done
+    echo " listo"
+    export APT_PROXY="http://localhost:3142"
+}
+
 build_target() {
     local target="${1:?missing build target}"
-
+    start_apt_cacher
     bash "${BUILD_SCRIPT}" "${target}"
+}
+
+show_built_iso() {
+    local selected_iso="$1"
+    echo
+    if [[ -f "${selected_iso}" ]]; then
+        echo "ISO generado: ${selected_iso}"
+        echo "SHA256: $(cat "${selected_iso}.sha256" 2>/dev/null || echo 'N/A')"
+    else
+        echo "ISO esperado: ${selected_iso:-<no encontrado>}"
+        echo "SHA256: N/A"
+    fi
+    echo
+    echo "Para grabar en USB:"
+    echo "  sudo dd if=\"${selected_iso}\" of=/dev/sdX bs=4M status=progress oflag=sync"
 }
 
 start_usage() {
     cat <<EOF
-Usage: $(basename "$0") [menu|latest|latest-full|latest-preview|build-full|build-preview|grub-preview|help]
+Uso: $(basename "$0") [menu|run|build|build-run|create-disk|grub-preview|build-preview|help]
 
-Actions:
-  menu            Show interactive start menu
-  latest          Boot the newest ISO found in ${OUTPUT_DIR_RESOLVED}
-  latest-full     Boot the newest full ISO (excluding grub preview ISO)
-  latest-preview  Boot the GRUB preview ISO
-  build-full      Build the full ISO and boot it
-  build-preview   Build the GRUB preview ISO and boot it
-  grub-preview    Show the generated GRUB preview files
-  help            Show this help
+Acciones:
+  menu            abre el menú interactivo
+  run             inicia el entorno de prueba con el ISO más nuevo
+  build           construye el ISO y muestra la ruta
+  build-run       construye el ISO e inicia el entorno de prueba
+  create-disk     crea el disco NTFS lab
+  grub-preview    muestra los archivos GRUB preview
+  build-preview   genera preview de GRUB y lo levanta
+  help            muestra esta ayuda
 EOF
 }
 
 run_start_action() {
-    local action="${1:-latest}"
+    local action="${1:-run}"
     local selected_iso=""
 
     case "${action}" in
-        latest)
+        run)
             selected_iso="${ISO_PATH:-$(latest_iso_path "${OUTPUT_DIR_RESOLVED}")}"
             require_iso "${selected_iso}"
-            launch_vm "${selected_iso}"
+            launch_winxp 1 "${selected_iso}"
             ;;
-        latest-full)
-            selected_iso="$(latest_full_iso_path "${OUTPUT_DIR_RESOLVED}")"
-            require_iso "${selected_iso}"
-            launch_vm "${selected_iso}"
-            ;;
-        latest-preview)
-            selected_iso="$(preview_iso_path "${OUTPUT_DIR_RESOLVED}")"
-            require_iso "${selected_iso}"
-            launch_vm "${selected_iso}"
-            ;;
-        build-full)
+        build)
             build_target full
-            selected_iso="$(latest_full_iso_path "${OUTPUT_DIR_RESOLVED}")"
+            selected_iso="$(latest_iso_path "${OUTPUT_DIR_RESOLVED}")"
+            show_built_iso "${selected_iso}"
+            ;;
+        build-run)
+            build_target full
+            selected_iso="$(latest_iso_path "${OUTPUT_DIR_RESOLVED}")"
             require_iso "${selected_iso}"
-            launch_vm "${selected_iso}"
+            launch_winxp 1 "${selected_iso}"
             ;;
         build-preview)
             build_target grub-preview
             selected_iso="$(preview_iso_path "${OUTPUT_DIR_RESOLVED}")"
             require_iso "${selected_iso}"
-            launch_vm "${selected_iso}"
+            launch_vm "${selected_iso}" 0
+            ;;
+        create-disk)
+            create_lab_disk "${LAB_DISK_PATH}" 15
             ;;
         grub-preview)
             show_grub_preview "${OUTPUT_DIR_RESOLVED}"
@@ -285,7 +318,7 @@ run_start_action() {
             start_usage
             ;;
         *)
-            echo "Unknown start action: ${action}" >&2
+            echo "Acción desconocida: ${action}" >&2
             start_usage >&2
             return 1
             ;;
@@ -299,42 +332,40 @@ start_interactive_menu() {
 ========================================
  Start Menu
 ========================================
-1) Levantar último ISO disponible
-2) Generar build completo y levantar ISO
-3) Levantar ISO preview de GRUB
-4) Generar solo GRUB y levantar ISO preview
+1) Iniciar entorno de prueba
+2) Generar ISO
+3) Generar ISO e iniciar
+4) Crear disco NTFS lab
 5) Ver archivos GRUB preview
-6) Salir
+6) Generar preview de GRUB y levantarlo
+ g) Ver archivos GRUB preview
+0) Salir
 EOF
 
-        read -r -p "Selecciona una opción [1-6]: " option
+        read -r -p "Selecciona una opción: " option
         echo
 
         case "${option}" in
-            1)
-                run_start_action latest
-                return 0
-                ;;
-            2)
-                run_start_action build-full
-                return 0
-                ;;
-            3)
-                run_start_action latest-preview
-                return 0
-                ;;
+            1) run_start_action run; return 0 ;;
+            2) run_start_action build; return 0 ;;
+            3) run_start_action build-run; return 0 ;;
             4)
-                run_start_action build-preview
-                return 0
+                run_start_action create-disk
+                echo
+                read -r -p "Presiona Enter para volver al menú..." _
                 ;;
             5)
                 run_start_action grub-preview
                 echo
                 read -r -p "Presiona Enter para volver al menú..." _
                 ;;
-            6)
-                return 0
+            6) run_start_action build-preview; return 0 ;;
+            g)
+                run_start_action grub-preview
+                echo
+                read -r -p "Presiona Enter para volver al menú..." _
                 ;;
+            0) return 0 ;;
             *)
                 echo "Opción inválida."
                 echo
@@ -345,19 +376,11 @@ EOF
 
 main() {
     local action="${1-}"
-
-    if [[ -z "${action}" ]]; then
-        if [[ -t 0 && -t 1 ]]; then
-            start_interactive_menu
-        else
-            run_start_action latest
-        fi
-        return 0
-    fi
-
+    [[ -z "${action}" ]] && { start_interactive_menu; return 0; }
     run_start_action "${action}"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    ensure_root "$@"
     main "$@"
 fi

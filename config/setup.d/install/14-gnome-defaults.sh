@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+exit 0
+GNOME_INPUT_SOURCES_VAL="${GNOME_INPUT_SOURCES:-[('xkb', 'latam'), ('xkb', 'us')]}"
 
 # Configure dconf system profile so GNOME reads the system-db
 mkdir -p /etc/dconf/profile
@@ -17,9 +19,17 @@ enabled-extensions=['stealmyfocus-ext']
 disable-user-extensions=false
 favorite-apps=['firefox-esr.desktop', 'org.gnome.Nautilus.desktop', 'org.gnome.Terminal.desktop']
 
+EOF
+
+cat >> /etc/dconf/db/local.d/20-contestant-defaults <<EOF
+
 [org/gnome/desktop/input-sources]
-sources=[('xkb', 'latam')]
+sources=${GNOME_INPUT_SOURCES_VAL}
 per-window=false
+
+EOF
+
+cat >> /etc/dconf/db/local.d/20-contestant-defaults <<'EOF'
 
 [org/gnome/desktop/session]
 idle-delay=uint32 900

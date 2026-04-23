@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-
+exit
 PROFILE_DIR="/tmp/contestant-vm"
 CACHE_DIR="/tmp/cache"
 DOC_DST="/usr/share/doc/icpcbo"

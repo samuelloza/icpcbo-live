@@ -20,15 +20,23 @@ set -euo pipefail
 
 . /usr/lib/contest/common.sh
 
+[ -r /etc/contestiso/update.env ] && . /etc/contestiso/update.env
+
 LOG="/var/log/contest-deploy.log"
 MARKER=".contest-installed"
 MIN_FREE_MB=5120
 OVERLAY_IMG_SIZE_MB=4096   # 4 GB ext4 image for non-POSIX filesystems
 MOUNT_TMP="/mnt/contest-deploy-target"
+RUNTIME_VERSION_VALUE="${RUNTIME_VERSION:-dev}"
 
 _log()  { local ts; ts=$(date -u +%H:%M:%S); echo "[${ts}] $*" | tee -a "${LOG}"; }
 _warn() { _log "WARN: $*"; }
 _die()  { _log "FATAL: $*" >&2; exit 1; }
+
+need_portable_tool() {
+    local tool="$1"
+    command -v "${tool}" >/dev/null 2>&1 || _die "Falta herramienta requerida para modo portable: ${tool}"
+}
 
 mkdir -p "$(dirname "${LOG}")"
 [ "$(id -u)" -eq 0 ] || _die "Must run as root"
@@ -60,6 +68,8 @@ fi
     _die "Source squashfs not found: ${SOURCE_DIR}/${CONTEST_ROOT}"
 
 _log "ISO boot detected. Starting deployment."
+_log "Portable mode: the target partition will NOT be reformatted."
+_log "Portable mode: files will be copied inside ${CONTEST_DIR} on the existing filesystem."
 
 # ----------------------------------------------------------------
 # Resolve target partition
@@ -125,7 +135,10 @@ fi
 TARGET_FSTYPE="$(probe_partition "${TARGET_DEV}")" || \
     _die "Cannot probe partition ${TARGET_DEV} (unsupported fs or not enough space)"
 
+OVERLAY_IMG_SIZE_MB="$(overlay_img_size_mb_for_fstype "${TARGET_FSTYPE}" "${OVERLAY_IMG_SIZE_MB}")"
+
 _log "Target: ${TARGET_DEV} (${TARGET_FSTYPE})"
+_log "Target filesystem will be preserved as-is."
 
 # ----------------------------------------------------------------
 # Idempotency
@@ -164,10 +177,24 @@ _log "Space OK: ${free_mb} MB free, ${required_mb} MB needed."
 _log "Copying contest files..."
 mkdir -p "${MOUNT_TMP}${CONTEST_DIR}"
 
+contest_root="${MOUNT_TMP}${CONTEST_DIR}"
+current_dir="$(contest_current_dir "${contest_root}")"
+staging_dir="$(contest_staging_dir "${contest_root}")"
+state_dir="$(contest_state_dir "${contest_root}")"
+
+rm -rf "${current_dir}"
+mkdir -p "${current_dir}" "${staging_dir}" "${state_dir}"
+
 for f in vmlinuz initrd.img "${CONTEST_ROOT}"; do
     _log "  → ${f}"
-    cp "${SOURCE_DIR}/${f}" "${MOUNT_TMP}${CONTEST_DIR}/${f}"
+    cp "${SOURCE_DIR}/${f}" "${current_dir}/${f}"
 done
+if [ -f "${SOURCE_DIR}/grub-entry.cfg" ]; then
+    cp "${SOURCE_DIR}/grub-entry.cfg" "${current_dir}/grub-entry.cfg"
+fi
+write_runtime_version "${contest_root}" "${RUNTIME_VERSION_VALUE}"
+printf '%s\n' "${RUNTIME_VERSION_VALUE}" > "${current_dir}/VERSION"
+link_runtime_files "${contest_root}"
 _log "Files copied."
 
 # ----------------------------------------------------------------
@@ -181,7 +208,11 @@ case "${TARGET_FSTYPE}" in
         _log "Native filesystem — overlay dirs will be created by initramfs at boot."
         ;;
     *)
+        need_portable_tool truncate
+        need_portable_tool mkfs.ext4
         OVERLAY_IMG="${MOUNT_TMP}${CONTEST_DIR}/overlay.img"
+        _log "Filesystem ${TARGET_FSTYPE} does not support native overlayfs."
+        _log "Portable mode will use ${CONTEST_DIR}/overlay.img to preserve compatibility with the existing partition."
         _log "Non-POSIX filesystem — creating ${OVERLAY_IMG_SIZE_MB} MB ext4 overlay image..."
         truncate -s "${OVERLAY_IMG_SIZE_MB}M" "${OVERLAY_IMG}" || \
             _die "Cannot create overlay.img"
@@ -202,6 +233,7 @@ TARGET_FSTYPE=${TARGET_FSTYPE}
 OVERLAY_IMG_CREATED=${OVERLAY_IMG_CREATED}
 CONTEST_DIR=${CONTEST_DIR}
 CONTEST_ROOT=${CONTEST_ROOT}
+RUNTIME_VERSION=${RUNTIME_VERSION_VALUE}
 MARKER
 
 cleanup_mount

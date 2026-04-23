@@ -61,6 +61,9 @@ run_menu_action() {
         runtime)
             bash "${BUILD_SCRIPT}" runtime
             ;;
+        publish-update)
+            bash "${BUILD_SCRIPT}" publish-update
+            ;;
         full)
             bash "${BUILD_SCRIPT}" full
             ;;
@@ -76,6 +79,7 @@ Acciones:
   show-iso-grub     Muestra output/grub-preview/boot/grub/grub.cfg
   show-runtime-grub Muestra output/grub-preview/${CONTEST_DIR}/grub-entry.cfg
   runtime           Ejecuta build hasta runtime
+  publish-update    Publica runtime versionado en updates/
   full              Ejecuta build completo
   test-grub         Corre tests/check-grub-config.sh
 EOF
@@ -102,12 +106,13 @@ while true; do
 2) Ver grub.cfg generado
 3) Ver grub-entry.cfg generado
 4) Build hasta runtime
-5) Build completo
-6) Test de GRUB
-7) Salir
+ 5) Publicar update
+ 6) Build completo
+ 7) Test de GRUB
+ 8) Salir
 EOF
 
-    read -r -p "Selecciona una opción [1-7]: " option
+    read -r -p "Selecciona una opción [1-8]: " option
     echo
 
     case "${option}" in
@@ -128,14 +133,18 @@ EOF
             pause_menu
             ;;
         5)
-            run_menu_action full
+            run_menu_action publish-update
             pause_menu
             ;;
         6)
-            run_menu_action test-grub
+            run_menu_action full
             pause_menu
             ;;
         7)
+            run_menu_action test-grub
+            pause_menu
+            ;;
+        8)
             exit 0
             ;;
         *)

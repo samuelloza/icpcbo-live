@@ -3,22 +3,23 @@ services:
     build:
       context: .
       dockerfile: docker/apt-cacher-ng/Dockerfile
+    ports:
+      - "3142:3142"
     volumes:
       - ./apt_cacher_cache:/var/cache/apt-cacher-ng
       - ./apt_cacher_logs:/var/log/apt-cacher-ng
+    restart: unless-stopped
 
-  builder:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    depends_on:
-      - apt-cacher
-    environment:
-      APT_PROXY: ${APT_PROXY-http://apt-cacher:3142}
-    privileged: true
+  iso-local-conf-viewer:
+    image: python:3-alpine
+    # Sirve el bootstrap remoto, el instalador full y el canal de updates:
+    # - /remote/full-install-bootstrap.sh
+    # - /remote/full-install.sh
+    # - /updates/manifest.json
+    command: python3 -m http.server 8081 --directory /work
+    ports:
+      - "8081:8081"
     volumes:
-      - ./output:/work/output
-      - ./download_cache:/work/download-cache
-      - ./config:/work/config
-      - ./scripts:/work/scripts
-      - ./overlay:/work/overlay
+      - ./remote:/work/remote:ro
+      - ./updates:/work/updates:ro
+    restart: unless-stopped

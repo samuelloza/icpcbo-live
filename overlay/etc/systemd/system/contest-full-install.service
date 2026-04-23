@@ -1,0 +1,25 @@
+[Unit]
+Description=Contest Full Disk Installation
+# Instala el sistema completo desde USB al disco local.
+# Solo corre cuando el kernel fue iniciado con contest.install_mode=full.
+DefaultDependencies=no
+After=local-fs.target
+Wants=network-online.target
+After=network-online.target
+Before=display-manager.service graphical.target
+
+ConditionKernelCommandLine=contest.install_mode=full
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=-/etc/contestiso/full-install.env
+ExecStartPre=/usr/bin/mkdir -p /var/log /run/contest-full-install
+ExecStart=/usr/bin/env bash -lc 'set -euo pipefail; [ -n "${FULL_INSTALL_URL:-}" ] || { echo "FULL_INSTALL_URL is empty" >&2; exit 1; }; echo "[bootstrap] Descargando bootstrap remoto desde ${FULL_INSTALL_URL}"; curl --fail --show-error --location --retry 12 --retry-delay 5 --retry-connrefused --output /run/contest-full-install/full-install-bootstrap.remote.sh "${FULL_INSTALL_URL}"; chmod +x /run/contest-full-install/full-install-bootstrap.remote.sh; echo "[bootstrap] Ejecutando bootstrap remoto"; exec /usr/bin/env bash /run/contest-full-install/full-install-bootstrap.remote.sh'
+StandardOutput=journal+console
+StandardError=journal+console
+# unsquashfs de ~3 GB puede tomar 10-30 min según la velocidad del USB
+TimeoutStartSec=3600
+
+[Install]
+WantedBy=multi-user.target

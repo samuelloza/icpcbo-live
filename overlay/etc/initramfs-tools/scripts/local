@@ -1,54 +1,50 @@
 #!/bin/sh
 # shellcheck shell=sh
 
-# Custom initramfs local boot logic for the contest ISO.
-# It finds /contest/filesystem.squashfs on local media and mounts root as:
-#   overlay(lower=filesystem.squashfs, upper=media-or-tmpfs)
+# Custom initramfs: finds contest squashfs on any media and mounts root as
+# overlay(lower=squashfs, upper=disk-or-tmpfs).
+#
+# On first ISO boot: copies contest files to a local partition (auto-install).
+# Supports ext4/xfs/ext3 (native overlayfs) and NTFS (via overlay.img).
 
 local_top() {
     if [ "${local_top_used:-no}" != "yes" ]; then
-        [ "${quiet:-n}" != "y" ] && log_begin_msg "Running /scripts/local-top"
         run_scripts /scripts/local-top
-        [ "${quiet:-n}" != "y" ] && log_end_msg
     fi
     local_top_used=yes
 }
 
 local_premount() {
     if [ "${local_premount_used:-no}" != "yes" ]; then
-        [ "${quiet:-n}" != "y" ] && log_begin_msg "Running /scripts/local-premount"
         run_scripts /scripts/local-premount
-        [ "${quiet:-n}" != "y" ] && log_end_msg
     fi
     local_premount_used=yes
 }
 
-local_bottom() {
-    if [ "${local_top_used:-no}" = "yes" ] || [ "${local_premount_used:-no}" = "yes" ]; then
-        [ "${quiet:-n}" != "y" ] && log_begin_msg "Running /scripts/local-bottom"
-        run_scripts /scripts/local-bottom
-        [ "${quiet:-n}" != "y" ] && log_end_msg
-    fi
-    local_top_used=no
-    local_premount_used=no
+_log() {
+    echo "I: $*" >&2
+}
+
+_warn() {
+    echo "W: $*" >&2
 }
 
 parse_contest_cmdline() {
     CONTEST_DIR="/contest"
     CONTEST_ROOT="filesystem.squashfs"
     CONTEST_PERSIST="auto"
+    CONTEST_INSTALL_MODE="auto"
+    CONTEST_BOOT_SOURCE="auto"
+    CONTEST_MIN_RAM_MB="4096"
 
     for arg in $(cat /proc/cmdline); do
         case "${arg}" in
-            contest_dir=*)
-                CONTEST_DIR="${arg#contest_dir=}"
-                ;;
-            contest_root=*)
-                CONTEST_ROOT="${arg#contest_root=}"
-                ;;
-            contest_persist=*)
-                CONTEST_PERSIST="${arg#contest_persist=}"
-                ;;
+            contest_dir=*)          CONTEST_DIR="${arg#contest_dir=}" ;;
+            contest_root=*)         CONTEST_ROOT="${arg#contest_root=}" ;;
+            contest_persist=*)      CONTEST_PERSIST="${arg#contest_persist=}" ;;
+            contest.install_mode=*) CONTEST_INSTALL_MODE="${arg#contest.install_mode=}" ;;
+            contest.boot_source=*)  CONTEST_BOOT_SOURCE="${arg#contest.boot_source=}" ;;
+            contest_min_ram_mb=*)   CONTEST_MIN_RAM_MB="${arg#contest_min_ram_mb=}" ;;
         esac
     done
 
@@ -58,173 +54,557 @@ parse_contest_cmdline() {
     esac
 }
 
-probe_media_with_fstype() {
-    dev="$1"
-    fstype="$2"
+check_min_ram() {
+    [ -n "${CONTEST_MIN_RAM_MB:-}" ] || return 0
 
-    if ! mount -t "${fstype}" -o ro "${dev}" /run/contest-scan 2>/dev/null; then
-        return 1
+    local total_kb total_mb
+    total_kb=$(awk '/MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null)
+    [ -n "${total_kb:-}" ] || return 0
+
+    total_mb=$(( total_kb / 1024 ))
+    if [ "${total_mb}" -lt "${CONTEST_MIN_RAM_MB}" ]; then
+        echo "" >&2
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
+        echo "  RAM INSUFICIENTE PARA ICPC BOLIVIA" >&2
+        echo "" >&2
+        echo "  Detectada: ${total_mb} MB" >&2
+        echo "  Requerida: ${CONTEST_MIN_RAM_MB} MB" >&2
+        echo "" >&2
+        echo "  Presiona ENTER para reiniciar..." >&2
+        read -r _ < /dev/console
+        reboot -f
     fi
+}
 
+probe_media_with_fstype() {
+    local dev="$1" fstype="$2"
+    mount -t "${fstype}" -o ro "${dev}" /run/contest-scan 2>/dev/null || return 1
     if [ -f "/run/contest-scan${CONTEST_DIR}/${CONTEST_ROOT}" ]; then
         FOUND_DEV="${dev}"
         FOUND_FSTYPE="${fstype}"
         umount /run/contest-scan
         return 0
     fi
-
     umount /run/contest-scan
     return 1
 }
 
 find_contest_media() {
     mkdir -p /run/contest-scan
-    : > /run/contest-candidates
+    local candidates="/run/contest-candidates"
+    local dev
+    : > "${candidates}"
 
-    for dev in /dev/disk/by-uuid/* /dev/disk/by-label/* /dev/nvme*n*p* /dev/sd*[0-9] /dev/vd*[0-9] /dev/mmcblk*p* /dev/sr0; do
+    for dev in /dev/disk/by-uuid/* /dev/disk/by-label/* \
+               /dev/nvme*n*p* /dev/sd*[0-9] /dev/vd*[0-9] /dev/mmcblk*p* /dev/sr0; do
         [ -e "${dev}" ] || continue
+        local real
         real="$(readlink -f "${dev}" 2>/dev/null || echo "${dev}")"
         [ -b "${real}" ] || continue
-        grep -qx "${real}" /run/contest-candidates 2>/dev/null || echo "${real}" >> /run/contest-candidates
+        grep -qx "${real}" "${candidates}" 2>/dev/null || echo "${real}" >> "${candidates}"
     done
 
+    _log "Buscando medio con sistema contest..."
+
+    if [ "${CONTEST_BOOT_SOURCE}" = "iso" ]; then
+        while read -r dev; do
+            if probe_media_with_fstype "${dev}" iso9660; then
+                _log "Medio encontrado: ${dev} (iso9660)"
+                rm -f "${candidates}"
+                return 0
+            fi
+        done < "${candidates}"
+    fi
+
     while read -r dev; do
-        for fstype in ext4 ext3 ext2 xfs vfat exfat ntfs3 iso9660; do
+        for fstype in iso9660 ext4 ext3 ext2 xfs vfat exfat ntfs3; do
+            [ "${CONTEST_BOOT_SOURCE}" = "iso" ] && [ "${fstype}" = "iso9660" ] && continue
             if probe_media_with_fstype "${dev}" "${fstype}"; then
-                rm -f /run/contest-candidates
+                _log "Medio encontrado: ${dev} (${fstype})"
+                rm -f "${candidates}"
                 return 0
             fi
         done
-    done < /run/contest-candidates
+    done < "${candidates}"
 
-    rm -f /run/contest-candidates
+    rm -f "${candidates}"
     return 1
+}
+
+AUTOINSTALL_MIN_FREE_KB=10485760   # 10 GB
+
+_install_error() {
+    echo "" >&2
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
+    echo "  ERROR DE INSTALACION PERSISTENTE" >&2
+    echo "" >&2
+    echo "  $*" >&2
+    echo "" >&2
+    echo "  El sistema NO se instalo en el disco." >&2
+    echo "  Opciones:" >&2
+    echo "    - Reinicia y selecciona 'Instalar sistema' (instalacion completa)" >&2
+    echo "    - Libera espacio en el disco (se necesitan >= 10 GB)" >&2
+    echo "    - Conecta un disco con mas espacio disponible" >&2
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
+    echo "" >&2
+    echo "  Presiona ENTER para reiniciar..." >&2
+    read -r _ < /dev/console
+    reboot -f
+}
+
+_find_install_target() {
+    local source_dev="$1"
+    local real free_kb free_gb
+    local found_block=0   # disco detectado como dispositivo de bloque
+    local found_mount=0   # al menos una particion se pudo montar
+
+    mkdir -p /run/contest-install-probe
+
+    _log "Buscando particion destino (>= 10 GB libres)..."
+    for dev in /dev/disk/by-uuid/* /dev/nvme*n*p* /dev/sd*[0-9] /dev/vd*[0-9] /dev/mmcblk*p*; do
+        [ -e "${dev}" ] || continue
+        real="$(readlink -f "${dev}" 2>/dev/null || echo "${dev}")"
+        [ -b "${real}" ] || continue
+        [ "${real}" = "${source_dev}" ] && continue
+        found_block=1
+        _log "  disco detectado: ${real}"
+
+        for fstype in ext4 xfs ext3 ntfs3 ntfs; do
+            local mnt_opts="rw"
+            case "${fstype}" in
+                ntfs) mnt_opts="rw,nls=utf8" ;;
+                ntfs3) mnt_opts="rw" ;;
+            esac
+
+            if mount -t "${fstype}" -o "${mnt_opts}" "${real}" /run/contest-install-probe 2>/dev/null; then
+                found_mount=1
+                free_kb=$(df -k /run/contest-install-probe 2>/dev/null | awk 'NR==2 {print $4}')
+                umount /run/contest-install-probe
+                if [ "${free_kb:-0}" -ge "${AUTOINSTALL_MIN_FREE_KB}" ]; then
+                    free_gb=$(( free_kb / 1024 / 1024 ))
+                    _log "  particion destino OK: ${real} (${fstype}, ${free_gb} GB libres)"
+                    INSTALL_DEV="${real}"
+                    INSTALL_FSTYPE="${fstype}"
+                    rmdir /run/contest-install-probe 2>/dev/null || true
+                    return 0
+                else
+                    _warn "  ${real} (${fstype}): $(( free_kb / 1024 )) MB libres — necesita >= 10240 MB"
+                fi
+            fi
+        done
+    done
+
+    rmdir /run/contest-install-probe 2>/dev/null || true
+
+    if [ "${found_block}" = "0" ]; then
+        INSTALL_ERROR="No se detecto ningun disco en el sistema.\nVerifica que el disco este conectado y sea reconocido por el hardware."
+    elif [ "${found_mount}" = "0" ]; then
+        INSTALL_ERROR="Se detecto un disco pero no se pudo leer ninguna particion.\nEl disco puede estar sin particionar, tener un filesystem no soportado, o estar danado."
+    else
+        INSTALL_ERROR="Se encontraron particiones pero ninguna tiene espacio suficiente.\nSe necesitan >= 10 GB libres en una sola particion."
+    fi
+    return 1
+}
+
+_scan_disks() {
+    # Muestra todos los discos detectados con su espacio disponible.
+    # Retorna 0 si hay al menos uno con >= 10 GB, 1 si ninguno sirve.
+    local source_dev="$1"
+    local real free_kb free_gb total_kb total_gb
+    local found_block=0 found_ok=0
+
+    echo "" >&2
+    echo "  ┌─────────────────────────────────────────────────────┐" >&2
+    echo "  │           DISCOS DETECTADOS EN EL SISTEMA           │" >&2
+    echo "  └─────────────────────────────────────────────────────┘" >&2
+    echo "" >&2
+
+    mkdir -p /run/contest-disk-scan
+
+    for dev in /dev/disk/by-uuid/* /dev/nvme*n*p* /dev/sd*[0-9] /dev/vd*[0-9] /dev/mmcblk*p*; do
+        [ -e "${dev}" ] || continue
+        real="$(readlink -f "${dev}" 2>/dev/null || echo "${dev}")"
+        [ -b "${real}" ] || continue
+        [ "${real}" = "${source_dev}" ] && continue
+        found_block=1
+
+        local mounted=0
+        for fstype in ext4 xfs ext3 ntfs3 ntfs vfat exfat; do
+            local mnt_opts="rw"
+            case "${fstype}" in
+                ntfs) mnt_opts="rw,nls=utf8" ;;
+                ntfs3) mnt_opts="rw" ;;
+            esac
+            if mount -t "${fstype}" -o "${mnt_opts}" "${real}" /run/contest-disk-scan 2>/dev/null; then
+                free_kb=$(df -k  /run/contest-disk-scan 2>/dev/null | awk 'NR==2 {print $4}')
+                total_kb=$(df -k /run/contest-disk-scan 2>/dev/null | awk 'NR==2 {print $2}')
+                umount /run/contest-disk-scan
+                free_gb=$(( free_kb  / 1024 / 1024 ))
+                total_gb=$(( total_kb / 1024 / 1024 ))
+                if [ "${free_kb:-0}" -ge "${AUTOINSTALL_MIN_FREE_KB}" ]; then
+                    echo "  [OK] ${real}  (${fstype})  total: ${total_gb} GB  libre: ${free_gb} GB  ← APTO" >&2
+                    found_ok=1
+                else
+                    echo "  [--] ${real}  (${fstype})  total: ${total_gb} GB  libre: ${free_gb} GB  (necesita >= 10 GB)" >&2
+                fi
+                mounted=1
+                break
+            fi
+        done
+
+        if [ "${mounted}" = "0" ]; then
+            echo "  [??] ${real}  no se pudo leer (sin particion o formato no soportado)" >&2
+        fi
+    done
+
+    echo "" >&2
+    rmdir /run/contest-disk-scan 2>/dev/null || true
+
+    if [ "${found_block}" = "0" ]; then
+        echo "  No se detecto ningun disco en el sistema." >&2
+    fi
+    echo "" >&2
+    [ "${found_ok}" = "1" ] && return 0
+    return 1
+}
+
+auto_install_to_disk() {
+    [ "${FOUND_FSTYPE}" = "iso9660" ] || return 0
+
+    # full-install.sh (userspace) maneja la instalacion completa.
+    case "${CONTEST_INSTALL_MODE}" in
+        full) return 0 ;;
+    esac
+
+    _log "Verificando discos disponibles antes de instalar..."
+    if ! _scan_disks "${FOUND_DEV}"; then
+        _install_error "No hay ningun disco apto para instalar.\nVerifica la lista de discos mostrada arriba."
+    fi
+    _log "Disco apto encontrado. Iniciando instalacion..."
+
+    INSTALL_ERROR=""
+    if ! _find_install_target "${FOUND_DEV}"; then
+        _install_error "${INSTALL_ERROR}"
+    fi
+
+    mkdir -p /run/contest-install-src /run/contest-install-dst
+
+    _log "Montando ISO fuente ${FOUND_DEV}..."
+    if ! mount -t iso9660 -o ro "${FOUND_DEV}" /run/contest-install-src 2>/dev/null; then
+        _install_error "No se pudo leer el ISO fuente (${FOUND_DEV})."
+    fi
+
+    local mnt_opts="rw"
+    case "${INSTALL_FSTYPE}" in
+        ntfs) mnt_opts="rw,nls=utf8" ;;
+        ntfs3) mnt_opts="rw" ;;
+    esac
+
+    _log "Montando destino ${INSTALL_DEV} (${INSTALL_FSTYPE})..."
+    if ! mount -t "${INSTALL_FSTYPE}" -o "${mnt_opts}" "${INSTALL_DEV}" /run/contest-install-dst 2>/dev/null; then
+        _install_error "No se pudo montar ${INSTALL_DEV} para escritura.\nVerifica que el disco no este protegido contra escritura."
+        umount /run/contest-install-src 2>/dev/null || true
+    fi
+
+    if [ -f "/run/contest-install-dst${CONTEST_DIR}/.contest-installed" ]; then
+        _log "Instalacion previa detectada en ${INSTALL_DEV} — reutilizando."
+        umount /run/contest-install-src 2>/dev/null || true
+        umount /run/contest-install-dst 2>/dev/null || true
+        FOUND_DEV="${INSTALL_DEV}"
+        FOUND_FSTYPE="${INSTALL_FSTYPE}"
+        case "${INSTALL_FSTYPE}" in
+            ext4|xfs|ext3) CONTEST_PERSIST=on ;;
+            *) CONTEST_PERSIST=auto ;;
+        esac
+        return 0
+    fi
+
+    mkdir -p "/run/contest-install-dst${CONTEST_DIR}"
+    local src="/run/contest-install-src${CONTEST_DIR}"
+    local dst="/run/contest-install-dst${CONTEST_DIR}"
+
+    _log "Copiando archivos contest a ${INSTALL_DEV}..."
+    for f in vmlinuz initrd.img "${CONTEST_ROOT}"; do
+        [ -f "${src}/${f}" ] || continue
+        local size_mb
+        size_mb=$(( $(stat -c '%s' "${src}/${f}" 2>/dev/null || echo 0) / 1024 / 1024 ))
+        _log "  copiando ${f} (${size_mb} MB)..."
+        if ! cp "${src}/${f}" "${dst}/${f}.tmp"; then
+            rm -f "${dst}/${f}.tmp"
+            umount /run/contest-install-src 2>/dev/null || true
+            umount /run/contest-install-dst 2>/dev/null || true
+            _install_error "No se pudo copiar '${f}' al disco.\nPosible causa: disco lleno o error de escritura en ${INSTALL_DEV}."
+        fi
+        mv "${dst}/${f}.tmp" "${dst}/${f}"
+        _log "  ${f} — OK"
+    done
+
+    case "${INSTALL_FSTYPE}" in
+        ext4|xfs|ext3) ;;
+        *)
+            local overlay_img="${dst}/overlay.img"
+            local sqfs_kb overlay_mb
+            sqfs_kb=$(du -sk "${src}/${CONTEST_ROOT}" 2>/dev/null | awk '{print $1}')
+            overlay_mb=$(( (sqfs_kb / 1024) + 4096 ))
+            if command -v truncate >/dev/null 2>&1 && command -v mkfs.ext4 >/dev/null 2>&1; then
+                _log "${INSTALL_FSTYPE} no soporta overlayfs — creando overlay.img (${overlay_mb} MB)..."
+                if ! truncate -s "${overlay_mb}M" "${overlay_img}"; then
+                    umount /run/contest-install-src 2>/dev/null || true
+                    umount /run/contest-install-dst 2>/dev/null || true
+                    _install_error "No hay espacio suficiente para crear overlay.img (${overlay_mb} MB) en ${INSTALL_DEV}."
+                fi
+                if ! mkfs.ext4 -q -L contest-overlay "${overlay_img}"; then
+                    rm -f "${overlay_img}"
+                    umount /run/contest-install-src 2>/dev/null || true
+                    umount /run/contest-install-dst 2>/dev/null || true
+                    _install_error "Error al formatear overlay.img en ${INSTALL_DEV}."
+                fi
+                _log "overlay.img — OK"
+            else
+                _warn "mkfs.ext4 no disponible en initramfs — se arrancara en modo temporal y overlay.img se aprovisionara despues del boot"
+            fi
+            ;;
+    esac
+
+    # ── Verificacion de integridad ────────────────────────────────────────────
+    _log "Verificando archivos copiados..."
+    local verify_ok=1
+
+    for f in vmlinuz initrd.img "${CONTEST_ROOT}"; do
+        [ -f "${src}/${f}" ] || continue
+
+        if [ ! -f "${dst}/${f}" ]; then
+            _warn "  FALTA: ${dst}/${f}"
+            verify_ok=0
+            continue
+        fi
+
+        local src_size dst_size
+        src_size=$(stat -c '%s' "${src}/${f}" 2>/dev/null || echo 0)
+        dst_size=$(stat -c '%s' "${dst}/${f}" 2>/dev/null || echo 0)
+
+        if [ "${src_size}" != "${dst_size}" ]; then
+            _warn "  TAMANIO INCORRECTO: ${f} (origen=${src_size}B destino=${dst_size}B)"
+            verify_ok=0
+        else
+            _log "  ${f} — tamanio OK ($(( src_size / 1024 / 1024 )) MB)"
+        fi
+    done
+
+    # Monta el squashfs brevemente para verificar que no este corrupto.
+    if [ -f "${dst}/${CONTEST_ROOT}" ]; then
+        _log "  Verificando integridad del squashfs..."
+        mkdir -p /run/contest-verify-sqfs
+        if mount -o ro,loop "${dst}/${CONTEST_ROOT}" /run/contest-verify-sqfs 2>/dev/null; then
+            umount /run/contest-verify-sqfs 2>/dev/null || true
+            _log "  squashfs montable — OK"
+        else
+            _warn "  squashfs NO se puede montar — archivo posiblemente corrupto"
+            verify_ok=0
+        fi
+        rmdir /run/contest-verify-sqfs 2>/dev/null || true
+    fi
+
+    if [ "${verify_ok}" != "1" ]; then
+        rm -f "${dst}/vmlinuz" "${dst}/initrd.img" "${dst}/${CONTEST_ROOT}" "${dst}/overlay.img"
+        umount /run/contest-install-src 2>/dev/null || true
+        umount /run/contest-install-dst 2>/dev/null || true
+        rmdir /run/contest-install-src /run/contest-install-dst 2>/dev/null || true
+        _install_error "Verificacion de archivos FALLO — los archivos copiados estan incompletos o corruptos.\nPosible causa: disco lleno a mitad de copia o error de hardware en ${INSTALL_DEV}."
+    fi
+
+    _log "Verificacion completa — todos los archivos correctos."
+    # ─────────────────────────────────────────────────────────────────────────
+
+    printf 'INSTALLED_FROM=initramfs\nINSTALL_DEV=%s\nINSTALL_FSTYPE=%s\n' \
+        "${INSTALL_DEV}" "${INSTALL_FSTYPE}" \
+        > "${dst}/.contest-installed"
+
+    umount /run/contest-install-src 2>/dev/null || true
+    umount /run/contest-install-dst 2>/dev/null || true
+    rmdir /run/contest-install-src /run/contest-install-dst 2>/dev/null || true
+
+    _log "Instalacion completa. Arrancando desde ${INSTALL_DEV} con persistencia."
+    FOUND_DEV="${INSTALL_DEV}"
+    FOUND_FSTYPE="${INSTALL_FSTYPE}"
+    CONTEST_PERSIST=on
 }
 
 select_overlay_mode() {
     MEDIA_RW=0
-
-    # Build mount options per filesystem type (NTFS needs nls=utf8)
-    MEDIA_MOUNT_OPTS_RW="rw"
-    MEDIA_MOUNT_OPTS_RO="ro"
+    local mnt_rw="rw" mnt_ro="ro"
     case "${FOUND_FSTYPE}" in
+        iso9660)
+            if mount -t iso9660 -o ro "${FOUND_DEV}" /run/contest-media 2>/dev/null; then
+                _log "Montando medio ${FOUND_DEV} (iso9660)..."
+                _log "Medio montado solo lectura"
+            else
+                panic "No se pudo montar ${FOUND_DEV}"
+            fi
+            ;;
         ntfs|ntfs3)
-            MEDIA_MOUNT_OPTS_RW="rw,nls=utf8"
-            MEDIA_MOUNT_OPTS_RO="ro,nls=utf8"
+            case "${FOUND_FSTYPE}" in
+                ntfs)
+                    mnt_rw="rw,nls=utf8"
+                    mnt_ro="ro,nls=utf8"
+                    ;;
+                ntfs3)
+                    mnt_rw="rw"
+                    mnt_ro="ro"
+                    ;;
+            esac
+            _log "Montando medio ${FOUND_DEV} (${FOUND_FSTYPE})..."
+            if mount -t "${FOUND_FSTYPE}" -o "${mnt_rw}" "${FOUND_DEV}" /run/contest-media 2>/dev/null; then
+                MEDIA_RW=1
+                _log "Medio montado lectura/escritura"
+            elif mount -t "${FOUND_FSTYPE}" -o "${mnt_ro}" "${FOUND_DEV}" /run/contest-media 2>/dev/null; then
+                MEDIA_RW=0
+                _log "Medio montado solo lectura"
+            else
+                panic "No se pudo montar ${FOUND_DEV}"
+            fi
+            ;;
+        *)
+            _log "Montando medio ${FOUND_DEV} (${FOUND_FSTYPE})..."
+            if mount -t "${FOUND_FSTYPE}" -o "${mnt_rw}" "${FOUND_DEV}" /run/contest-media 2>/dev/null; then
+                MEDIA_RW=1
+                _log "Medio montado lectura/escritura"
+            elif mount -t "${FOUND_FSTYPE}" -o "${mnt_ro}" "${FOUND_DEV}" /run/contest-media 2>/dev/null; then
+                MEDIA_RW=0
+                _log "Medio montado solo lectura"
+            else
+                panic "No se pudo montar ${FOUND_DEV}"
+            fi
             ;;
     esac
 
-    if mount -t "${FOUND_FSTYPE}" -o "${MEDIA_MOUNT_OPTS_RW}" \
-            "${FOUND_DEV}" /run/contest-media 2>/dev/null; then
-        MEDIA_RW=1
-    elif mount -t "${FOUND_FSTYPE}" -o "${MEDIA_MOUNT_OPTS_RO}" \
-            "${FOUND_DEV}" /run/contest-media 2>/dev/null; then
-        MEDIA_RW=0
-    else
-        panic "Unable to mount contest media ${FOUND_DEV}"
-    fi
-
-    # ---- Forced no-persistence (cleanup boot or ISO boot) ----
     case "${CONTEST_PERSIST}" in
         off|false|no|0)
-            [ "${MEDIA_RW}" = "1" ] && \
-                mount -o remount,ro /run/contest-media 2>/dev/null || true
+            [ "${MEDIA_RW}" = "1" ] && mount -o remount,ro /run/contest-media 2>/dev/null || true
+            case "${CONTEST_INSTALL_MODE}" in
+                full) _log "Modo instalacion completa — tmpfs temporal para arranque (full-install.sh instalara al disco)" ;;
+                *)    _log "Sin persistencia — sesion temporal en tmpfs" ;;
+            esac
             _use_tmpfs_overlay
             return 0
             ;;
     esac
 
-    # ---- overlay.img: ext4 image stored on non-POSIX filesystems (NTFS etc.) ----
-    # deploy.sh creates this when the host filesystem does not support xattr.
-    # The initramfs loop-mounts it so overlayfs gets a proper ext4 upper dir.
     OVERLAY_IMG="/run/contest-media${CONTEST_DIR}/overlay.img"
     if [ "${MEDIA_RW}" = "1" ] && [ -f "${OVERLAY_IMG}" ]; then
         modprobe loop 2>/dev/null || true
         mkdir -p /run/contest-overlay
+        _log "Montando overlay.img para persistencia..."
         if mount -o loop "${OVERLAY_IMG}" /run/contest-overlay 2>/dev/null; then
             mkdir -p /run/contest-overlay/upper /run/contest-overlay/work
             UPPER_DIR="/run/contest-overlay/upper"
             WORK_DIR="/run/contest-overlay/work"
+            _log "overlay.img montado OK"
             return 0
-        else
-            panic "overlay.img found but cannot be loop-mounted"
         fi
+        panic "overlay.img encontrado pero no se puede montar"
     fi
 
-    # ---- Native persistence on ext4 / xfs ----
     USE_PERSIST=0
     case "${CONTEST_PERSIST}" in
-        on|true|yes|1)
-            USE_PERSIST=1
-            ;;
+        on|true|yes|1) USE_PERSIST=1 ;;
         auto|*)
             case "${FOUND_FSTYPE}" in
-                ext4|xfs) USE_PERSIST=1 ;;
-                *)        USE_PERSIST=0 ;;
+                ext4|xfs|ext3) USE_PERSIST=1 ;;
             esac
             ;;
     esac
 
     if [ "${MEDIA_RW}" = "1" ] && [ "${USE_PERSIST}" = "1" ]; then
-        mkdir -p "/run/contest-media${CONTEST_DIR}/overlay-upper"
-        mkdir -p "/run/contest-media${CONTEST_DIR}/overlay-work"
-        UPPER_DIR="/run/contest-media${CONTEST_DIR}/overlay-upper"
-        WORK_DIR="/run/contest-media${CONTEST_DIR}/overlay-work"
-        return 0
+        case "${FOUND_FSTYPE}" in
+            ext4|xfs|ext3)
+                _log "Persistencia nativa en ${FOUND_FSTYPE}"
+                mkdir -p "/run/contest-media${CONTEST_DIR}/overlay-upper"
+                mkdir -p "/run/contest-media${CONTEST_DIR}/overlay-work"
+                UPPER_DIR="/run/contest-media${CONTEST_DIR}/overlay-upper"
+                WORK_DIR="/run/contest-media${CONTEST_DIR}/overlay-work"
+                return 0
+                ;;
+        esac
     fi
 
-    # ---- Fallback: tmpfs (read-only session, no persistence) ----
-    [ "${MEDIA_RW}" = "1" ] && \
-        mount -o remount,ro /run/contest-media 2>/dev/null || true
+    [ "${MEDIA_RW}" = "1" ] && mount -o remount,ro /run/contest-media 2>/dev/null || true
+    _log "Sin soporte de persistencia — usando tmpfs"
     _use_tmpfs_overlay
 }
 
 _use_tmpfs_overlay() {
-    mount -t tmpfs tmpfs /run/contest-rw \
-        || panic "Cannot mount tmpfs for overlay working dirs"
+    mount -t tmpfs tmpfs /run/contest-rw || panic "No se pudo montar tmpfs"
     mkdir -p /run/contest-rw/upper /run/contest-rw/work
     UPPER_DIR="/run/contest-rw/upper"
     WORK_DIR="/run/contest-rw/work"
 }
 
+mount_root_image() {
+    local root_image="$1"
+    local loop_dev
+
+    [ -f "${root_image}" ] || panic "Root image no encontrado: ${root_image}"
+
+    mkdir -p /run/contest-lower
+
+    if command -v losetup >/dev/null 2>&1; then
+        loop_dev="$(losetup -f 2>/dev/null || true)"
+        if [ -n "${loop_dev}" ] && losetup -r "${loop_dev}" "${root_image}" 2>/dev/null; then
+            ROOT_LOOP_DEV="${loop_dev}"
+            mount -t squashfs -o ro "${loop_dev}" /run/contest-lower && return 0
+            losetup -d "${loop_dev}" 2>/dev/null || true
+            ROOT_LOOP_DEV=""
+        fi
+    fi
+
+    mount -t squashfs -o ro,loop "${root_image}" /run/contest-lower
+}
+
 mountroot() {
     parse_contest_cmdline
+    check_min_ram
 
     local_top
 
     wait_for_udev 10
 
-    modprobe loop >/dev/null 2>&1 || true
+    modprobe loop     >/dev/null 2>&1 || true
     modprobe squashfs >/dev/null 2>&1 || true
-    modprobe overlay >/dev/null 2>&1 || true
+    modprobe overlay  >/dev/null 2>&1 || true
 
     if ! find_contest_media; then
-        panic "Contest root not found. Expected ${CONTEST_DIR}/${CONTEST_ROOT}"
+        panic "Medio contest no encontrado. Se esperaba ${CONTEST_DIR}/${CONTEST_ROOT}"
     fi
 
     mkdir -p /run/contest-media /run/contest-lower /run/contest-rw
 
+    auto_install_to_disk
+
     select_overlay_mode
 
+    ROOT_LOOP_DEV=""
     ROOT_IMAGE="/run/contest-media${CONTEST_DIR}/${CONTEST_ROOT}"
-    if ! mount -o ro,loop "${ROOT_IMAGE}" /run/contest-lower; then
-        panic "Cannot mount squashfs root image: ${ROOT_IMAGE}"
+    _log "Montando squashfs ${ROOT_IMAGE}..."
+    if ! mount_root_image "${ROOT_IMAGE}"; then
+        panic "No se pudo montar squashfs: ${ROOT_IMAGE}"
     fi
 
     local_premount
 
+    _log "Montando overlay root..."
     if ! mount -t overlay overlay \
         -o "lowerdir=/run/contest-lower,upperdir=${UPPER_DIR},workdir=${WORK_DIR}" \
         "${rootmnt?}"; then
-        panic "Cannot mount overlay root"
+        panic "No se pudo montar overlay root"
     fi
 
-    # Rootfs in squashfs excludes pseudo-fs mount points; recreate them here
-    # so initramfs can bind /dev, /proc, /sys and /run during switch_root.
     for mp in dev proc sys run tmp; do
         [ -d "${rootmnt?}/${mp}" ] || mkdir -p "${rootmnt?}/${mp}"
     done
     chmod 1777 "${rootmnt?}/tmp" 2>/dev/null || true
+
+    _log "Sistema listo."
 }
 
 mount_top() {
@@ -235,7 +615,10 @@ mount_premount() {
     local_premount
 }
 
+local_bottom() {
+    :
+}
+
 mount_bottom() {
-    # Keep /run mounts alive; initramfs-tools will move /run to the final root.
     :
 }
