@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD_SCRIPT_DIR="${SCRIPT_DIR}/build"
 
-# shellcheck source=./lib.sh
+# shellcheck source=./build/lib/common.sh
 source "${SCRIPT_DIR}/lib.sh"
 # shellcheck source=../config/iso.conf
 source "${PROJECT_DIR}/config/iso.conf"
@@ -16,32 +16,34 @@ if [[ -f "${PROJECT_DIR}/config/iso.local.conf" ]]; then
     source "${PROJECT_DIR}/config/iso.local.conf"
 fi
 
-if [[ "${OUTPUT_DIR}" == /work/* ]] && { [[ ! -d /work ]] || [[ ! -w /work ]]; }; then
-    OUTPUT_DIR="${PROJECT_DIR}/output"
-fi
+resolve_output_path() {
+    local path="$1"
+    local fallback_name="$2"
 
-if [[ -e "${OUTPUT_DIR}" && ! -w "${OUTPUT_DIR}" ]]; then
-    OUTPUT_DIR="${PROJECT_DIR}/output-local"
-elif [[ ! -e "${OUTPUT_DIR}" && ! -w "$(dirname "${OUTPUT_DIR}")" ]]; then
-    OUTPUT_DIR="${PROJECT_DIR}/output-local"
-fi
+    if [[ "${path}" == /work/* ]] && { [[ ! -d /work ]] || [[ ! -w /work ]]; }; then
+        path="${PROJECT_DIR}/${fallback_name}"
+    fi
 
-if [[ "${UPDATES_DIR}" == /work/* ]] && { [[ ! -d /work ]] || [[ ! -w /work ]]; }; then
-    UPDATES_DIR="${PROJECT_DIR}/updates"
-fi
+    if [[ -e "${path}" ]]; then
+        if [[ ! -w "${path}" ]]; then
+            path="${PROJECT_DIR}/${fallback_name}-local"
+        fi
+    elif [[ ! -w "$(dirname "${path}")" ]]; then
+        path="${PROJECT_DIR}/${fallback_name}-local"
+    fi
 
-if [[ -e "${UPDATES_DIR}" && ! -w "${UPDATES_DIR}" ]]; then
-    UPDATES_DIR="${PROJECT_DIR}/updates-local"
-elif [[ ! -e "${UPDATES_DIR}" && ! -w "$(dirname "${UPDATES_DIR}")" ]]; then
-    UPDATES_DIR="${PROJECT_DIR}/updates-local"
-fi
+    printf '%s\n' "${path}"
+}
+
+OUTPUT_DIR="$(resolve_output_path "${OUTPUT_DIR}" output)"
+UPDATES_DIR="$(resolve_output_path "${UPDATES_DIR}" updates)"
 
 DOWNLOAD_CACHE_DIR="${DOWNLOAD_CACHE_DIR:-/work/download-cache}"
 if [[ "${DOWNLOAD_CACHE_DIR}" == /work/* ]] && { [[ ! -d /work ]] || [[ ! -w /work ]]; }; then
     DOWNLOAD_CACHE_DIR="${PROJECT_DIR}/download_cache"
 fi
 
-# shellcheck source=./build/grub.sh
+# shellcheck source=./build/lib/grub.sh
 source "${BUILD_SCRIPT_DIR}/grub.sh"
 
 rootfs_tmp_path() {
@@ -61,7 +63,11 @@ cleanup() {
 trap cleanup EXIT
 
 copy_to_rootfs_tmp() {
-    local src="${1:?missing source file}"
+    if [[ "$#" -lt 1 || "$#" -gt 2 ]]; then
+        die "copy_to_rootfs_tmp expects: source [dest_name]"
+    fi
+
+    local src="$1"
     local dest_name="${2:-$(basename "${src}")}"
 
     mkdir -p "$(rootfs_tmp_path)"
@@ -69,15 +75,14 @@ copy_to_rootfs_tmp() {
 }
 
 copy_setup_hooks() {
-    local src="${PROJECT_DIR}/config/setup.d"
+    local src="${PROJECT_DIR}/scripts/setup.d"
     local dst="$(rootfs_tmp_path "setup.d")"
 
     rm -rf "${dst}"
     mkdir -p "${dst}"
 
-    if [[ -d "${src}" ]]; then
-        cp -a "${src}/." "${dst}/"
-    fi
+    [[ -d "${src}" ]] || return 0
+    cp -a "${src}/." "${dst}/"
 }
 
 # Copy host-side build helper scripts into the chroot so both chroot sessions
@@ -98,7 +103,11 @@ copy_chroot_inputs() {
 }
 
 run_chroot_script() {
-    local script_name="${1:?missing chroot script name}"
+    if [[ "$#" -lt 1 ]]; then
+        die "run_chroot_script expects at least a script name"
+    fi
+
+    local script_name="$1"
     local guest_script_path="/tmp/${script_name}"
     shift
 

@@ -18,7 +18,9 @@
 
 set -euo pipefail
 
-. /usr/lib/contest/common.sh
+. /usr/lib/contest/lib/base.sh
+. /usr/lib/contest/lib/fs.sh
+. /usr/lib/contest/lib/runtime-layout.sh
 
 [ -r /etc/contestiso/update.env ] && . /etc/contestiso/update.env
 
@@ -36,6 +38,15 @@ _die()  { _log "FATAL: $*" >&2; exit 1; }
 need_portable_tool() {
     local tool="$1"
     command -v "${tool}" >/dev/null 2>&1 || _die "Falta herramienta requerida para modo portable: ${tool}"
+}
+
+mount_target() {
+    local mode="$1"
+    local mnt_opt
+
+    mnt_opt="$(mount_opts_for_fstype "${TARGET_FSTYPE}" "${mode}")"
+    mkdir -p "${MOUNT_TMP}"
+    mount -t "${TARGET_FSTYPE}" -o "${mnt_opt}" "${TARGET_DEV}" "${MOUNT_TMP}"
 }
 
 mkdir -p "$(dirname "${LOG}")"
@@ -143,10 +154,7 @@ _log "Target filesystem will be preserved as-is."
 # ----------------------------------------------------------------
 # Idempotency
 # ----------------------------------------------------------------
-local_mnt_opt="$(mount_opts_for_fstype "${TARGET_FSTYPE}" rw)"
-
-mkdir -p "${MOUNT_TMP}"
-mount -t "${TARGET_FSTYPE}" -o ro "${TARGET_DEV}" "${MOUNT_TMP}" || \
+mount_target ro || \
     _die "Cannot read-mount ${TARGET_DEV}"
 
 if [ -f "${MOUNT_TMP}${CONTEST_DIR}/${MARKER}" ]; then
@@ -158,7 +166,7 @@ cleanup_mount
 # ----------------------------------------------------------------
 # Validate free space
 # ----------------------------------------------------------------
-mount -t "${TARGET_FSTYPE}" -o "${local_mnt_opt}" "${TARGET_DEV}" "${MOUNT_TMP}" || \
+mount_target rw || \
     _die "Cannot write-mount ${TARGET_DEV}"
 
 free_mb=$(df -m "${MOUNT_TMP}" --output=avail 2>/dev/null | tail -1 | tr -d ' ')
@@ -216,7 +224,7 @@ case "${TARGET_FSTYPE}" in
         _log "Non-POSIX filesystem — creating ${OVERLAY_IMG_SIZE_MB} MB ext4 overlay image..."
         truncate -s "${OVERLAY_IMG_SIZE_MB}M" "${OVERLAY_IMG}" || \
             _die "Cannot create overlay.img"
-        mkfs.ext4 -q -L contest-overlay "${OVERLAY_IMG}" || \
+        mkfs.ext4 -q -E nodiscard,lazy_itable_init=0,lazy_journal_init=0 -L contest-overlay "${OVERLAY_IMG}" || \
             _die "mkfs.ext4 failed on overlay.img"
         OVERLAY_IMG_CREATED=1
         _log "overlay.img created."

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-exit 0
+
 CACHE_DIR="/tmp/cache"
 mkdir -p "${CACHE_DIR}"
 

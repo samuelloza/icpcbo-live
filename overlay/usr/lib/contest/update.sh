@@ -2,7 +2,16 @@
 
 set -euo pipefail
 
-. "${CONTEST_COMMON_SH:-/usr/lib/contest/common.sh}"
+if [ -r /usr/lib/contest/lib/base.sh ]; then
+    . /usr/lib/contest/lib/base.sh
+    . /usr/lib/contest/lib/fs.sh
+    . /usr/lib/contest/lib/runtime-layout.sh
+else
+    lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    . "${lib_dir}/lib/base.sh"
+    . "${lib_dir}/lib/fs.sh"
+    . "${lib_dir}/lib/runtime-layout.sh"
+fi
 
 LOG="${CONTEST_UPDATE_LOG:-/var/log/contest-update.log}"
 MOUNT_TMP="${CONTEST_UPDATE_MOUNT_TMP:-/mnt/contest-update-target}"
@@ -16,13 +25,32 @@ log() {
     echo "[${ts}] $*" | tee -a "${LOG}"
 }
 
+die() {
+    log "FATAL: $*"
+    exit 1
+}
+
+download_file() {
+    local url="$1"
+    local dest="$2"
+
+    curl --fail --silent --show-error --location "${url}" -o "${dest}"
+}
+
+mount_target_rw() {
+    local mount_opts
+
+    mount_opts="$(mount_opts_for_fstype "${MARKER_TARGET_FSTYPE}" rw)"
+    mkdir -p "${MOUNT_TMP}"
+    mount -t "${MARKER_TARGET_FSTYPE}" -o "${mount_opts}" "${MARKER_TARGET_DEV}" "${MOUNT_TMP}"
+}
+
 trap 'mountpoint -q "${MOUNT_TMP}" 2>/dev/null && umount "${MOUNT_TMP}" || true' EXIT
 
 mkdir -p "$(dirname "${LOG}")"
 
 if [ "${CONTEST_UPDATE_SKIP_ROOT_CHECK:-0}" != "1" ] && [ "$(id -u)" -ne 0 ]; then
-    log "FATAL: Must run as root"
-    exit 1
+    die "Must run as root"
 fi
 
 if [ ! -r "${UPDATE_ENV}" ]; then
@@ -62,29 +90,20 @@ else
 fi
 
 if [ -z "${MARKER_TARGET_DEV:-}" ] || [ -z "${MARKER_TARGET_FSTYPE:-}" ]; then
-    log "FATAL: Install marker is incomplete"
-    exit 1
+    die "Install marker is incomplete"
 fi
 
-mkdir -p "${MOUNT_TMP}"
-mount -t "${MARKER_TARGET_FSTYPE}" -o "$(mount_opts_for_fstype "${MARKER_TARGET_FSTYPE}" rw)" "${MARKER_TARGET_DEV}" "${MOUNT_TMP}" || {
-    log "FATAL: Cannot mount ${MARKER_TARGET_DEV} read-write"
-    exit 1
-}
+mount_target_rw || die "Cannot mount ${MARKER_TARGET_DEV} read-write"
 
 contest_root="${MOUNT_TMP}${CONTEST_DIR}"
 if [ ! -d "${contest_root}" ]; then
-    log "FATAL: Contest root missing on target: ${contest_root}"
-    exit 1
+    die "Contest root missing on target: ${contest_root}"
 fi
 
 local_version="$(read_runtime_version "${contest_root}" 2>/dev/null || printf '%s' "${RUNTIME_VERSION:-dev}")"
 manifest_tmp="$(mktemp)"
 
-curl --fail --silent --show-error --location "${UPDATE_MANIFEST_URL}" -o "${manifest_tmp}" || {
-    log "FATAL: Cannot download manifest: ${UPDATE_MANIFEST_URL}"
-    exit 1
-}
+download_file "${UPDATE_MANIFEST_URL}" "${manifest_tmp}" || die "Cannot download manifest: ${UPDATE_MANIFEST_URL}"
 
 manifest_info="$(python3 - "${manifest_tmp}" "${UPDATE_MANIFEST_URL}" <<'PY'
 import json, sys
@@ -102,8 +121,7 @@ PY
 
 remote_version="$(printf '%s\n' "${manifest_info}" | awk -F '\t' '$1=="VERSION" {print $2; exit}')"
 if [ -z "${remote_version}" ]; then
-    log "FATAL: Manifest does not define version"
-    exit 1
+    die "Manifest does not define version"
 fi
 
 if [ "${remote_version}" = "${local_version}" ]; then
@@ -113,8 +131,7 @@ fi
 
 artifact_lines="$(printf '%s\n' "${manifest_info}" | awk -F '\t' '$1=="ARTIFACT" {print}')"
 if [ -z "${artifact_lines}" ]; then
-    log "FATAL: Manifest does not define any artifacts"
-    exit 1
+    die "Manifest does not define any artifacts"
 fi
 
 staging_root="$(contest_staging_dir "${contest_root}")/${remote_version}"
@@ -133,27 +150,21 @@ while IFS=$'\t' read -r _kind name url sha; do
     esac
 
     if [ -z "${url}" ] || [ -z "${sha}" ]; then
-        log "FATAL: Manifest artifact ${name} is incomplete"
-        exit 1
+        die "Manifest artifact ${name} is incomplete"
     fi
 
     dest="${staging_root}/${out_name}"
     log "Downloading ${name}..."
-    curl --fail --silent --show-error --location "${url}" -o "${dest}" || {
-        log "FATAL: Cannot download artifact ${name}"
-        exit 1
-    }
+    download_file "${url}" "${dest}" || die "Cannot download artifact ${name}"
 
     if [ "$(sha256sum "${dest}" | awk '{print $1}')" != "${sha}" ]; then
-        log "FATAL: SHA256 mismatch for ${name}"
-        exit 1
+        die "SHA256 mismatch for ${name}"
     fi
 done <<< "${artifact_lines}"
 
 for required in vmlinuz initrd.img filesystem.squashfs; do
     if [ ! -f "${staging_root}/${required}" ]; then
-        log "FATAL: Missing staged ${required}"
-        exit 1
+        die "Missing staged ${required}"
     fi
 done
 

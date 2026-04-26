@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-exit 0
+
 FIREFOX_DIR="/usr/lib/firefox-esr"
 DEFAULT_BROWSER_URL_VAL="${DEFAULT_BROWSER_URL:-file:///usr/share/doc/icpcbo/index.html}"
 

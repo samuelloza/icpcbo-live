@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-exit 0
+
 DEFAULT_USER_VAL="${DEFAULT_USER:-icpc}"
 CACHE_DIR="/tmp/cache/contestant-vm-vsix"
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-exit
+
 CACHE_DIR="/tmp/cache/ides"
 ECLIPSE_CPP_VERSION="2025-03"
 ECLIPSE_INSTALLER_VERSION="2025-06"

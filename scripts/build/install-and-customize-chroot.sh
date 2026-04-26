@@ -4,6 +4,19 @@ set -euo pipefail
 
 apt-get update
 
+add_package_if_available() {
+    local pkg="$1"
+    local candidate
+
+    candidate="$(apt-cache policy "${pkg}" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
+    if [ -n "${candidate}" ] && [ "${candidate}" != "(none)" ]; then
+        PKGS+=("${pkg}")
+        return 0
+    fi
+
+    echo "W: package not found in repo, skipping: ${pkg}" >&2
+}
+
 PKGS=()
 while IFS= read -r pkg; do
     case "${pkg}" in
@@ -11,12 +24,7 @@ while IFS= read -r pkg; do
             continue
             ;;
     esac
-    candidate="$(apt-cache policy "${pkg}" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
-    if [ -n "${candidate}" ] && [ "${candidate}" != "(none)" ]; then
-        PKGS+=("${pkg}")
-    else
-        echo "W: package not found in repo, skipping: ${pkg}" >&2
-    fi
+    add_package_if_available "${pkg}"
 done < /tmp/packages.list
 
 if [ "${#PKGS[@]}" -gt 0 ]; then
@@ -33,7 +41,7 @@ apt-get install -y /tmp/code.deb || {
 }
 rm -f /tmp/code.deb
 
-/tmp/run-hook-dir.sh /tmp/setup.d/install
+/tmp/run-hook-dir.sh /tmp/setup.d
 
 # Ensure the default user exists even if hooks are customized or disabled.
 id -u "${DEFAULT_USER}" >/dev/null 2>&1 || \

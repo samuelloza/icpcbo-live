@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-exit 0
+
 PROFILE_DIR="/tmp/contestant-vm"
 EXT_SRC="${PROFILE_DIR}/files/misc"
 EXT_DST="/usr/share/gnome-shell/extensions"

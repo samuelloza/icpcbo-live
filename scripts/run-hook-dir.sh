@@ -8,7 +8,12 @@
 
 set -euo pipefail
 
-dir="${1:?Usage: run-hook-dir.sh <directory>}"
+if [ "$#" -ne 1 ]; then
+    echo "Usage: run-hook-dir.sh <directory>" >&2
+    exit 1
+fi
+
+dir="$1"
 
 [ -d "${dir}" ] || exit 0
 

@@ -2,7 +2,9 @@
 
 set -euo pipefail
 
-. /usr/lib/contest/common.sh
+. /usr/lib/contest/lib/base.sh
+. /usr/lib/contest/lib/fs.sh
+. /usr/lib/contest/lib/runtime-layout.sh
 
 LOG="/var/log/contest-rollback.log"
 MOUNT_TMP="/mnt/contest-rollback-target"
@@ -16,6 +18,14 @@ _log() {
 _die() {
     _log "FATAL: $*"
     exit 1
+}
+
+mount_target_rw() {
+    local mount_opts
+
+    mount_opts="$(mount_opts_for_fstype "${MARKER_TARGET_FSTYPE}" rw)"
+    mkdir -p "${MOUNT_TMP}"
+    mount -t "${MARKER_TARGET_FSTYPE}" -o "${mount_opts}" "${MARKER_TARGET_DEV}" "${MOUNT_TMP}"
 }
 
 cleanup_mount() {
@@ -34,10 +44,7 @@ MARKER_FILE="/run/contest-media${CONTEST_DIR}/.contest-installed"
 [ -f "${MARKER_FILE}" ] || _die "No portable install marker found"
 read_install_marker "${MARKER_FILE}"
 
-mount_opts="$(mount_opts_for_fstype "${MARKER_TARGET_FSTYPE}" rw)"
-mkdir -p "${MOUNT_TMP}"
-mount -t "${MARKER_TARGET_FSTYPE}" -o "${mount_opts}" "${MARKER_TARGET_DEV}" "${MOUNT_TMP}" || \
-    _die "Cannot mount target read-write"
+mount_target_rw || _die "Cannot mount target read-write"
 
 contest_root="${MOUNT_TMP}${CONTEST_DIR}"
 current_dir="$(contest_current_dir "${contest_root}")"

@@ -34,6 +34,7 @@ parse_contest_cmdline() {
     CONTEST_ROOT="filesystem.squashfs"
     CONTEST_PERSIST="auto"
     CONTEST_INSTALL_MODE="auto"
+    CONTEST_REINSTALL="0"
     CONTEST_BOOT_SOURCE="auto"
     CONTEST_MIN_RAM_MB="4096"
 
@@ -43,6 +44,7 @@ parse_contest_cmdline() {
             contest_root=*)         CONTEST_ROOT="${arg#contest_root=}" ;;
             contest_persist=*)      CONTEST_PERSIST="${arg#contest_persist=}" ;;
             contest.install_mode=*) CONTEST_INSTALL_MODE="${arg#contest.install_mode=}" ;;
+            contest.reinstall=*)    CONTEST_REINSTALL="${arg#contest.reinstall=}" ;;
             contest.boot_source=*)  CONTEST_BOOT_SOURCE="${arg#contest.boot_source=}" ;;
             contest_min_ram_mb=*)   CONTEST_MIN_RAM_MB="${arg#contest_min_ram_mb=}" ;;
         esac
@@ -74,6 +76,16 @@ check_min_ram() {
         read -r _ < /dev/console
         reboot -f
     fi
+}
+
+mount_opts_for_initramfs_fstype() {
+    local fstype="$1"
+    local mode="$2"
+
+    case "${fstype}" in
+        ntfs) echo "${mode},nls=utf8" ;;
+        *) echo "${mode}" ;;
+    esac
 }
 
 probe_media_with_fstype() {
@@ -170,11 +182,8 @@ _find_install_target() {
         _log "  disco detectado: ${real}"
 
         for fstype in ext4 xfs ext3 ntfs3 ntfs; do
-            local mnt_opts="rw"
-            case "${fstype}" in
-                ntfs) mnt_opts="rw,nls=utf8" ;;
-                ntfs3) mnt_opts="rw" ;;
-            esac
+            local mnt_opts
+            mnt_opts="$(mount_opts_for_initramfs_fstype "${fstype}" rw)"
 
             if mount -t "${fstype}" -o "${mnt_opts}" "${real}" /run/contest-install-probe 2>/dev/null; then
                 found_mount=1
@@ -215,7 +224,7 @@ _scan_disks() {
 
     echo "" >&2
     echo "  ┌─────────────────────────────────────────────────────┐" >&2
-    echo "  │           DISCOS DETECTADOS EN EL SISTEMA           │" >&2
+    echo "  │   <()        DISCOS DETECTADOS        <()           │" >&2
     echo "  └─────────────────────────────────────────────────────┘" >&2
     echo "" >&2
 
@@ -230,11 +239,8 @@ _scan_disks() {
 
         local mounted=0
         for fstype in ext4 xfs ext3 ntfs3 ntfs vfat exfat; do
-            local mnt_opts="rw"
-            case "${fstype}" in
-                ntfs) mnt_opts="rw,nls=utf8" ;;
-                ntfs3) mnt_opts="rw" ;;
-            esac
+            local mnt_opts
+            mnt_opts="$(mount_opts_for_initramfs_fstype "${fstype}" rw)"
             if mount -t "${fstype}" -o "${mnt_opts}" "${real}" /run/contest-disk-scan 2>/dev/null; then
                 free_kb=$(df -k  /run/contest-disk-scan 2>/dev/null | awk 'NR==2 {print $4}')
                 total_kb=$(df -k /run/contest-disk-scan 2>/dev/null | awk 'NR==2 {print $2}')
@@ -268,6 +274,74 @@ _scan_disks() {
     return 1
 }
 
+find_existing_install() {
+    local dev real fstype marker_root
+
+    mkdir -p /run/contest-existing-scan
+
+    for dev in /dev/disk/by-uuid/* /dev/nvme*n*p* /dev/sd*[0-9] /dev/vd*[0-9] /dev/mmcblk*p*; do
+        [ -e "${dev}" ] || continue
+        real="$(readlink -f "${dev}" 2>/dev/null || echo "${dev}")"
+        [ -b "${real}" ] || continue
+        [ "${real}" = "${FOUND_DEV}" ] && continue
+
+        for fstype in ext4 xfs ext3 ntfs3 ntfs vfat exfat; do
+            if mount -t "${fstype}" -o "$(mount_opts_for_initramfs_fstype "${fstype}" ro)" "${real}" /run/contest-existing-scan 2>/dev/null; then
+                marker_root="/run/contest-existing-scan${CONTEST_DIR}"
+                if { [ -f "${marker_root}/.contest-installed" ] || [ -f "${marker_root}/vmlinuz" ]; } && \
+                   [ -f "${marker_root}/vmlinuz" ] && \
+                   [ -f "${marker_root}/initrd.img" ] && \
+                   [ -f "${marker_root}/${CONTEST_ROOT}" ]; then
+                    umount /run/contest-existing-scan 2>/dev/null || true
+                    rmdir /run/contest-existing-scan 2>/dev/null || true
+                    FOUND_DEV="${real}"
+                    FOUND_FSTYPE="${fstype}"
+                    case "${fstype}" in
+                        ext4|xfs|ext3) CONTEST_PERSIST=on ;;
+                        *) CONTEST_PERSIST=auto ;;
+                    esac
+                    _log "Instalacion portable existente detectada en ${real} — reutilizando."
+                    return 0
+                fi
+                umount /run/contest-existing-scan 2>/dev/null || true
+            fi
+        done
+    done
+
+    rmdir /run/contest-existing-scan 2>/dev/null || true
+    return 1
+}
+
+find_existing_install_target() {
+    local dev real fstype marker_root
+
+    mkdir -p /run/contest-existing-scan
+
+    for dev in /dev/disk/by-uuid/* /dev/nvme*n*p* /dev/sd*[0-9] /dev/vd*[0-9] /dev/mmcblk*p*; do
+        [ -e "${dev}" ] || continue
+        real="$(readlink -f "${dev}" 2>/dev/null || echo "${dev}")"
+        [ -b "${real}" ] || continue
+        [ "${real}" = "${FOUND_DEV}" ] && continue
+
+        for fstype in ext4 xfs ext3 ntfs3 ntfs vfat exfat; do
+            if mount -t "${fstype}" -o "$(mount_opts_for_initramfs_fstype "${fstype}" ro)" "${real}" /run/contest-existing-scan 2>/dev/null; then
+                marker_root="/run/contest-existing-scan${CONTEST_DIR}"
+                if [ -f "${marker_root}/.contest-installed" ]; then
+                    umount /run/contest-existing-scan 2>/dev/null || true
+                    rmdir /run/contest-existing-scan 2>/dev/null || true
+                    INSTALL_DEV="${real}"
+                    INSTALL_FSTYPE="${fstype}"
+                    return 0
+                fi
+                umount /run/contest-existing-scan 2>/dev/null || true
+            fi
+        done
+    done
+
+    rmdir /run/contest-existing-scan 2>/dev/null || true
+    return 1
+}
+
 auto_install_to_disk() {
     [ "${FOUND_FSTYPE}" = "iso9660" ] || return 0
 
@@ -276,15 +350,26 @@ auto_install_to_disk() {
         full) return 0 ;;
     esac
 
-    _log "Verificando discos disponibles antes de instalar..."
-    if ! _scan_disks "${FOUND_DEV}"; then
-        _install_error "No hay ningun disco apto para instalar.\nVerifica la lista de discos mostrada arriba."
-    fi
-    _log "Disco apto encontrado. Iniciando instalacion..."
+    if [ "${CONTEST_REINSTALL}" = "1" ]; then
+        _log "Modo reinstalacion detectado. Buscando instalacion existente..."
+        if ! find_existing_install_target; then
+            _install_error "No se encontro una instalacion portable existente para reinstalar."
+        fi
+    else
+        if find_existing_install; then
+            return 0
+        fi
 
-    INSTALL_ERROR=""
-    if ! _find_install_target "${FOUND_DEV}"; then
-        _install_error "${INSTALL_ERROR}"
+        _log "Verificando discos disponibles antes de instalar..."
+        if ! _scan_disks "${FOUND_DEV}"; then
+            _install_error "No hay ningun disco para instalar.\nVerifica la lista de discos mostrada arriba."
+        fi
+        _log "Disco encontrado. Iniciando instalacion..."
+
+        INSTALL_ERROR=""
+        if ! _find_install_target "${FOUND_DEV}"; then
+            _install_error "${INSTALL_ERROR}"
+        fi
     fi
 
     mkdir -p /run/contest-install-src /run/contest-install-dst
@@ -294,11 +379,8 @@ auto_install_to_disk() {
         _install_error "No se pudo leer el ISO fuente (${FOUND_DEV})."
     fi
 
-    local mnt_opts="rw"
-    case "${INSTALL_FSTYPE}" in
-        ntfs) mnt_opts="rw,nls=utf8" ;;
-        ntfs3) mnt_opts="rw" ;;
-    esac
+    local mnt_opts
+    mnt_opts="$(mount_opts_for_initramfs_fstype "${INSTALL_FSTYPE}" rw)"
 
     _log "Montando destino ${INSTALL_DEV} (${INSTALL_FSTYPE})..."
     if ! mount -t "${INSTALL_FSTYPE}" -o "${mnt_opts}" "${INSTALL_DEV}" /run/contest-install-dst 2>/dev/null; then
@@ -306,7 +388,12 @@ auto_install_to_disk() {
         umount /run/contest-install-src 2>/dev/null || true
     fi
 
-    if [ -f "/run/contest-install-dst${CONTEST_DIR}/.contest-installed" ]; then
+    if [ "${CONTEST_REINSTALL}" = "1" ]; then
+        _log "Reinstalando: borrando ${CONTEST_DIR} en ${INSTALL_DEV}..."
+        rm -rf "/run/contest-install-dst${CONTEST_DIR:?}"
+    fi
+
+    if [ "${CONTEST_REINSTALL}" != "1" ] && [ -f "/run/contest-install-dst${CONTEST_DIR}/.contest-installed" ]; then
         _log "Instalacion previa detectada en ${INSTALL_DEV} — reutilizando."
         umount /run/contest-install-src 2>/dev/null || true
         umount /run/contest-install-dst 2>/dev/null || true
@@ -353,7 +440,7 @@ auto_install_to_disk() {
                     umount /run/contest-install-dst 2>/dev/null || true
                     _install_error "No hay espacio suficiente para crear overlay.img (${overlay_mb} MB) en ${INSTALL_DEV}."
                 fi
-                if ! mkfs.ext4 -q -L contest-overlay "${overlay_img}"; then
+                if ! mkfs.ext4 -q -E nodiscard,lazy_itable_init=0,lazy_journal_init=0 -L contest-overlay "${overlay_img}"; then
                     rm -f "${overlay_img}"
                     umount /run/contest-install-src 2>/dev/null || true
                     umount /run/contest-install-dst 2>/dev/null || true
@@ -443,16 +530,8 @@ select_overlay_mode() {
             fi
             ;;
         ntfs|ntfs3)
-            case "${FOUND_FSTYPE}" in
-                ntfs)
-                    mnt_rw="rw,nls=utf8"
-                    mnt_ro="ro,nls=utf8"
-                    ;;
-                ntfs3)
-                    mnt_rw="rw"
-                    mnt_ro="ro"
-                    ;;
-            esac
+            mnt_rw="$(mount_opts_for_initramfs_fstype "${FOUND_FSTYPE}" rw)"
+            mnt_ro="$(mount_opts_for_initramfs_fstype "${FOUND_FSTYPE}" ro)"
             _log "Montando medio ${FOUND_DEV} (${FOUND_FSTYPE})..."
             if mount -t "${FOUND_FSTYPE}" -o "${mnt_rw}" "${FOUND_DEV}" /run/contest-media 2>/dev/null; then
                 MEDIA_RW=1
@@ -497,8 +576,8 @@ select_overlay_mode() {
         _log "Montando overlay.img para persistencia..."
         if mount -o loop "${OVERLAY_IMG}" /run/contest-overlay 2>/dev/null; then
             mkdir -p /run/contest-overlay/upper /run/contest-overlay/work
-            UPPER_DIR="/run/contest-overlay/upper"
-            WORK_DIR="/run/contest-overlay/work"
+            PERSIST_DATA_DIR="/run/contest-overlay/upper"
+            PERSIST_META_DIR="/run/contest-overlay/work"
             _log "overlay.img montado OK"
             return 0
         fi
@@ -519,10 +598,10 @@ select_overlay_mode() {
         case "${FOUND_FSTYPE}" in
             ext4|xfs|ext3)
                 _log "Persistencia nativa en ${FOUND_FSTYPE}"
-                mkdir -p "/run/contest-media${CONTEST_DIR}/overlay-upper"
-                mkdir -p "/run/contest-media${CONTEST_DIR}/overlay-work"
-                UPPER_DIR="/run/contest-media${CONTEST_DIR}/overlay-upper"
-                WORK_DIR="/run/contest-media${CONTEST_DIR}/overlay-work"
+                mkdir -p "/run/contest-media${CONTEST_DIR}/persistent-data"
+                mkdir -p "/run/contest-media${CONTEST_DIR}/persistent-meta"
+                PERSIST_DATA_DIR="/run/contest-media${CONTEST_DIR}/persistent-data"
+                PERSIST_META_DIR="/run/contest-media${CONTEST_DIR}/persistent-meta"
                 return 0
                 ;;
         esac
@@ -535,9 +614,9 @@ select_overlay_mode() {
 
 _use_tmpfs_overlay() {
     mount -t tmpfs tmpfs /run/contest-rw || panic "No se pudo montar tmpfs"
-    mkdir -p /run/contest-rw/upper /run/contest-rw/work
-    UPPER_DIR="/run/contest-rw/upper"
-    WORK_DIR="/run/contest-rw/work"
+    mkdir -p /run/contest-rw/session-data /run/contest-rw/session-meta
+    PERSIST_DATA_DIR="/run/contest-rw/session-data"
+    PERSIST_META_DIR="/run/contest-rw/session-meta"
 }
 
 mount_root_image() {
@@ -594,7 +673,7 @@ mountroot() {
 
     _log "Montando overlay root..."
     if ! mount -t overlay overlay \
-        -o "lowerdir=/run/contest-lower,upperdir=${UPPER_DIR},workdir=${WORK_DIR}" \
+        -o "lowerdir=/run/contest-lower,upperdir=${PERSIST_DATA_DIR},workdir=${PERSIST_META_DIR}" \
         "${rootmnt?}"; then
         panic "No se pudo montar overlay root"
     fi

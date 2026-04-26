@@ -115,7 +115,6 @@ EOF
 chmod +x "${bin_dir}/mount" "${bin_dir}/umount" "${bin_dir}/mountpoint"
 
 PATH="${bin_dir}:${PATH}" \
-CONTEST_COMMON_SH="${PROJECT_DIR}/overlay/usr/lib/contest/common.sh" \
 CONTEST_UPDATE_ENV="${update_env}" \
 CONTEST_UPDATE_LOG="${tmp_dir}/contest-update.log" \
 CONTEST_UPDATE_MOUNT_TMP="${mounted_root}" \

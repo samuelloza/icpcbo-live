@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-exit 0
+
 GNOME_INPUT_SOURCES_VAL="${GNOME_INPUT_SOURCES:-[('xkb', 'latam'), ('xkb', 'us')]}"
 
 # Configure dconf system profile so GNOME reads the system-db

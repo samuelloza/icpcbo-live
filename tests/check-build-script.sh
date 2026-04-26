@@ -46,10 +46,10 @@ ROOTFS_DIR="${tmp_dir}/rootfs"
 mkdir -p "${ROOTFS_DIR}/tmp"
 
 copy_setup_hooks
-assert_file "${ROOTFS_DIR}/tmp/setup.d/install/01-base-cleanup.sh"
-assert_file "${ROOTFS_DIR}/tmp/setup.d/install/09-full-install-bootstrap-config.sh"
-assert_file "${ROOTFS_DIR}/tmp/setup.d/finalize/10-apt-policy.sh"
-assert_file "${ROOTFS_DIR}/tmp/setup.d/prepare/10-initramfs.sh"
+assert_file "${ROOTFS_DIR}/tmp/setup.d/01-base-cleanup.sh"
+assert_file "${ROOTFS_DIR}/tmp/setup.d/09-full-install-bootstrap-config.sh"
+assert_file "${ROOTFS_DIR}/tmp/setup.d/80-apt-policy.sh"
+assert_file "${ROOTFS_DIR}/tmp/setup.d/90-initramfs.sh"
 
 copy_chroot_scripts
 assert_file "${ROOTFS_DIR}/tmp/run-hook-dir.sh"

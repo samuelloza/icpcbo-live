@@ -5,7 +5,11 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # shellcheck source=/dev/null
-source "${PROJECT_DIR}/overlay/usr/lib/contest/common.sh"
+source "${PROJECT_DIR}/overlay/usr/lib/contest/lib/base.sh"
+# shellcheck source=/dev/null
+source "${PROJECT_DIR}/overlay/usr/lib/contest/lib/fs.sh"
+# shellcheck source=/dev/null
+source "${PROJECT_DIR}/overlay/usr/lib/contest/lib/runtime-layout.sh"
 
 fail() {
     echo "FAIL: $*" >&2

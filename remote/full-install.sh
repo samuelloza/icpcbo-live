@@ -13,7 +13,8 @@
 
 set -euo pipefail
 
-. /usr/lib/contest/common.sh
+. /usr/lib/contest/lib/base.sh
+. /usr/lib/contest/lib/runtime-layout.sh
 
 [ -r /etc/contestiso/update.env ] && . /etc/contestiso/update.env
 
@@ -69,6 +70,22 @@ _copy_file() {
     dd if="${src}" of="${dst}" bs=4M status=progress 2>&1 \
         | grep -v '^$' | tee -a "${LOG}" || true
     echo "" | tee -a "${LOG}"
+}
+
+mount_chroot_pseudofs() {
+    echo "  → Montando pseudo-filesystems (chroot)..." | tee -a "${LOG}"
+    mkdir -p "${MOUNT_TMP}/dev" "${MOUNT_TMP}/dev/pts" "${MOUNT_TMP}/proc" "${MOUNT_TMP}/sys" "${MOUNT_TMP}/run"
+    mount --bind /dev "${MOUNT_TMP}/dev"
+    mount --bind /dev/pts "${MOUNT_TMP}/dev/pts"
+    mount -t proc proc "${MOUNT_TMP}/proc"
+    mount -t sysfs sys "${MOUNT_TMP}/sys"
+    mount -t tmpfs tmpfs "${MOUNT_TMP}/run"
+    mkdir -p "${MOUNT_TMP}/run/lock"
+}
+
+format_root_partition() {
+    echo "  → Formateando root (${ROOT_PART})..." | tee -a "${LOG}"
+    mkfs.ext4 -F -L contest-root "${ROOT_PART}" 2>&1 | tee -a "${LOG}" || _die "mkfs.ext4 falló en ${ROOT_PART}"
 }
 
 mkdir -p "$(dirname "${LOG}")"
@@ -188,8 +205,7 @@ if [ "${IS_EFI}" = "1" ]; then
     _ok "Tabla GPT creada"
     echo "  → Formateando EFI  (${EFI_PART})..." | tee -a "${LOG}"
     mkfs.vfat -F32 -n EFI "${EFI_PART}" || _die "mkfs.vfat falló en ${EFI_PART}"
-    echo "  → Formateando root (${ROOT_PART})..." | tee -a "${LOG}"
-    mkfs.ext4 -F -L contest-root "${ROOT_PART}" 2>&1 | tee -a "${LOG}" || _die "mkfs.ext4 falló en ${ROOT_PART}"
+    format_root_partition
 else
     parted -s "${TARGET_DISK}" mklabel msdos mkpart primary ext4 1MiB 100% set 1 boot on
     partprobe "${TARGET_DISK}" 2>/dev/null || true
@@ -199,8 +215,7 @@ else
     EFI_PART=""
 
     _ok "Tabla MBR creada"
-    echo "  → Formateando root (${ROOT_PART})..." | tee -a "${LOG}"
-    mkfs.ext4 -F -L contest-root "${ROOT_PART}" 2>&1 | tee -a "${LOG}" || _die "mkfs.ext4 falló en ${ROOT_PART}"
+    format_root_partition
 fi
 
 ROOT_UUID="$(blkid -s UUID -o value "${ROOT_PART}")"
@@ -276,14 +291,7 @@ echo "  → Preparando /tmp y /var/tmp para update-initramfs..." | tee -a "${LOG
 mkdir -p "${MOUNT_TMP}/tmp" "${MOUNT_TMP}/var/tmp" "${MOUNT_TMP}/var/log"
 chmod 1777 "${MOUNT_TMP}/tmp" "${MOUNT_TMP}/var/tmp"
 
-echo "  → Montando pseudo-filesystems (chroot)..." | tee -a "${LOG}"
-mkdir -p "${MOUNT_TMP}/dev" "${MOUNT_TMP}/dev/pts" "${MOUNT_TMP}/proc" "${MOUNT_TMP}/sys" "${MOUNT_TMP}/run"
-mount --bind /dev "${MOUNT_TMP}/dev"
-mount --bind /dev/pts "${MOUNT_TMP}/dev/pts"
-mount -t proc proc "${MOUNT_TMP}/proc"
-mount -t sysfs sys "${MOUNT_TMP}/sys"
-mount -t tmpfs tmpfs "${MOUNT_TMP}/run"
-mkdir -p "${MOUNT_TMP}/run/lock"
+mount_chroot_pseudofs
 
 if [ "${IS_EFI}" = "1" ] && [ -n "${EFI_PART}" ]; then
     mkdir -p "${MOUNT_TMP}/boot/efi"

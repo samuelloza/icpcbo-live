@@ -67,3 +67,11 @@ evolution-data-server
 # --- Disk tools (not needed for contestants) ---
 gparted
 gnome-disk-utility
+
+
+
+exim4
+exim4-base
+exim4-config
+exim4-daemon-light
+exim4-daemon-heavy

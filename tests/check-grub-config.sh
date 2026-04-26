@@ -86,10 +86,15 @@ elif [ -n "\${hdd_root}" ]; then
         initrd /${CONTEST_DIR}/initrd.img
     }
 
+    menuentry "Reinstalar ICPC Bolivia" {
+        linux /${CONTEST_DIR}/vmlinuz contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=off console=tty0 console=ttyS0,115200n8 contest.boot_source=iso contest_min_ram_mb=${MIN_RAM_MB} contest.reinstall=1
+        initrd /${CONTEST_DIR}/initrd.img
+    }
+
 else
 
 # ── Instalacion ───────────────────────────────────────────────────────────
-    menuentry "Instalar (modo portable, sin borrar particion)" {
+    menuentry "ICPC BO" {
         linux /${CONTEST_DIR}/vmlinuz contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=off console=tty0 console=ttyS0,115200n8 contest.boot_source=iso contest_min_ram_mb=${MIN_RAM_MB}
         initrd /${CONTEST_DIR}/initrd.img
     }
