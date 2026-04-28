@@ -3,6 +3,7 @@
 set -euo pipefail
 
 GNOME_INPUT_SOURCES_VAL="${GNOME_INPUT_SOURCES:-[('xkb', 'latam'), ('xkb', 'us')]}"
+OPT_DIR="${OPT_CONTEST_DIR:-/opt/icpc}"
 
 # Configure dconf system profile so GNOME reads the system-db
 mkdir -p /etc/dconf/profile
@@ -29,7 +30,7 @@ per-window=false
 
 EOF
 
-cat >> /etc/dconf/db/local.d/20-contestant-defaults <<'EOF'
+cat >> /etc/dconf/db/local.d/20-contestant-defaults <<EOF
 
 [org/gnome/desktop/session]
 idle-delay=uint32 900
@@ -39,8 +40,8 @@ lock-enabled=true
 lock-delay=uint32 30
 
 [org/gnome/desktop/background]
-picture-uri='file:///opt/contestant-vm/misc/icpcbo-wallpaper.png'
-picture-uri-dark='file:///opt/contestant-vm/misc/icpcbo-wallpaper.png'
+picture-uri='file://${OPT_DIR}/misc/icpcbo-wallpaper.png'
+picture-uri-dark='file://${OPT_DIR}/misc/icpcbo-wallpaper.png'
 picture-options='centered'
 primary-color='#000000'
 secondary-color='#000000'

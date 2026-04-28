@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <title>ICPC Bolivia</title>
+
+  <style>
+    @font-face {
+      font-family: 'Share';
+      font-style: normal;
+      font-weight: 400;
+      src: local('Share Regular'), local('Share-Regular'),
+        url('fonts/share-v11-latin-regular.eot?#iefix') format('embedded-opentype'),
+        url('fonts/share-v11-latin-regular.woff2') format('woff2'),
+        url('fonts/share-v11-latin-regular.woff') format('woff'),
+        url('fonts/share-v11-latin-regular.ttf') format('truetype'),
+        url('fonts/share-v11-latin-regular.svg#Share') format('svg');
+    }
+
+    @font-face {
+      font-family: 'Fira Sans';
+      font-style: normal;
+      font-weight: 400;
+      src: local('Fira Sans Regular'), local('FiraSans-Regular'),
+        url('fonts/fira-sans-v10-latin-regular.eot?#iefix') format('embedded-opentype'),
+        url('fonts/fira-sans-v10-latin-regular.woff2') format('woff2'),
+        url('fonts/fira-sans-v10-latin-regular.woff') format('woff'),
+        url('fonts/fira-sans-v10-latin-regular.ttf') format('truetype'),
+        url('fonts/fira-sans-v10-latin-regular.svg#FiraSans') format('svg');
+    }
+
+    body {
+      font-family: 'Fira Sans', sans-serif;
+      font-size: 100%;
+      line-height: 1.4;
+      -webkit-text-size-adjust: 100%;
+      margin: 0;
+      padding: 0;
+    }
+
+    h1 {
+      display: none;
+    }
+
+    .title,
+    .link {
+      font-family: 'Share', sans-serif;
+      font-weight: bold;
+      text-align: center;
+      font-size: 140%;
+      line-height: 1.2;
+      margin: 1em 0;
+    }
+
+    .subtitle {
+      text-align: center;
+      margin: 0 1.5em 2em;
+    }
+
+    .button {
+      display: inline-block;
+      padding: 0.5em 1em;
+      background-color: #EEEEEE;
+      border: 1px solid #333333;
+      border-left-color: #CCCCCC;
+      border-top-color: #CCCCCC;
+      text-decoration: none;
+      font-weight: bold;
+      width: 100%;
+      max-width: 300px;
+      margin: 0 auto;
+      color: #000000;
+    }
+
+    .container {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 1em;
+      padding: 0 2em 2em;
+    }
+
+    .container .link {
+      width: 100%;
+      max-width: 320px;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>ICPC Bolivia</h1>
+
+  <div class="title">
+    <a class="button" href="software.html">Software instalado y versiones</a>
+  </div>
+
+  <p class="subtitle">
+    Referencias y accesos locales para C++, Java, Python y Kotlin.
+  </p>
+
+  <main class="container">
+    <div class="link"><a href="manual.html">Manual rápido</a></div>
+    <div class="link"><a href="cppreference/index.html">C/C++ Reference</a></div>
+    <div class="link"><a href="java-docs/">Java API</a></div>
+    <div class="link"><a href="python-docs/index.html">Python Documentation</a></div>
+    <div class="link"><a href="kotlin/index.html">Kotlin Local</a></div>
+  </main>
+</body>
+
+</html>

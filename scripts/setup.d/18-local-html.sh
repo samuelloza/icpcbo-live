@@ -3,6 +3,7 @@
 set -euo pipefail
 
 PROFILE_DIR="/tmp/contestant-vm"
+LOCAL_DOC_SRC="/tmp/assets/html"
 CACHE_DIR="/tmp/cache"
 DOC_DST="/usr/share/doc/icpcbo"
 FONT_DST="${DOC_DST}/fonts"
@@ -11,6 +12,10 @@ mkdir -p "${DOC_DST}" "${FONT_DST}" "${CACHE_DIR}"
 
 if [ -d "${PROFILE_DIR}/files/html" ]; then
     cp -a "${PROFILE_DIR}/files/html/." "${DOC_DST}/"
+fi
+
+if [ -d "${LOCAL_DOC_SRC}" ]; then
+    cp -a "${LOCAL_DOC_SRC}/." "${DOC_DST}/"
 fi
 
 /tmp/cached-curl.sh "https://gwfh.mranftl.com/api/fonts/fira-sans?download=zip&subsets=latin&variants=regular" "${CACHE_DIR}/fira-sans.zip" || true

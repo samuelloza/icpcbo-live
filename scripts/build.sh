@@ -94,12 +94,31 @@ copy_chroot_scripts() {
     copy_to_rootfs_tmp "${BUILD_SCRIPT_DIR}/trim-chroot.sh"
 }
 
+copy_repo_assets() {
+    local src="${PROJECT_DIR}/assets"
+    local dst="$(rootfs_tmp_path "assets")"
+
+    rm -rf "${dst}"
+    mkdir -p "${dst}"
+
+    if [[ -d "${src}" ]]; then
+        cp -a "${src}/." "${dst}/"
+    fi
+
+    if [[ -f "${PROJECT_DIR}/icpcbo-wallpaper.png" ]]; then
+        mkdir -p "${dst}/contestant-vm/misc"
+        cp "${PROJECT_DIR}/icpcbo-wallpaper.png" \
+            "${dst}/contestant-vm/misc/icpcbo-wallpaper.png"
+    fi
+}
+
 copy_chroot_inputs() {
     copy_to_rootfs_tmp "${PROJECT_DIR}/config/packages.list"
     copy_to_rootfs_tmp "${PROJECT_DIR}/config/packages-remove.list"
     cp -a "${PROJECT_DIR}/overlay/." "${ROOTFS_DIR}/"
     copy_setup_hooks
     copy_chroot_scripts
+    copy_repo_assets
 }
 
 run_chroot_script() {
@@ -121,6 +140,7 @@ cleanup_chroot_inputs() {
     rm -rf "$(rootfs_tmp_path "packages.list")" \
            "$(rootfs_tmp_path "packages-remove.list")" \
            "$(rootfs_tmp_path "setup.d")" \
+           "$(rootfs_tmp_path "assets")" \
            "$(rootfs_tmp_path "run-hook-dir.sh")" \
            "$(rootfs_tmp_path "cached-curl.sh")" \
            "$(rootfs_tmp_path "install-and-customize-chroot.sh")" \
@@ -190,6 +210,9 @@ phase_install_and_customize() {
         UPDATE_MANIFEST_URL="${UPDATE_MANIFEST_URL}" \
         UPDATE_CHECK_ON_BOOT="${UPDATE_CHECK_ON_BOOT}" \
         RUNTIME_VERSION="${RUNTIME_VERSION}" \
+        AUTH_SERVICE_URL="${AUTH_SERVICE_URL}" \
+        AUTH_SERVICE_TIMEOUT="${AUTH_SERVICE_TIMEOUT}" \
+        OPT_CONTEST_DIR="${OPT_CONTEST_DIR}" \
         DOWNLOAD_CACHE_DIR=/work/download-cache
 }
 

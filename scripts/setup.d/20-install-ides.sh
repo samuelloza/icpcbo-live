@@ -5,6 +5,8 @@ set -euo pipefail
 CACHE_DIR="/tmp/cache/ides"
 ECLIPSE_CPP_VERSION="2025-03"
 ECLIPSE_INSTALLER_VERSION="2025-06"
+KOTLIN_COMPILER_VERSION="1.9.24"
+INTELLIJ_IDEA_VERSION="2024.2.3"
 
 mkdir -p "${CACHE_DIR}"
 
@@ -80,6 +82,66 @@ EOF
         fi
     else
         echo "W: Eclipse Installer download failed" >&2
+    fi
+fi
+
+# Kotlin compiler
+KOTLIN_COMPILER_URL="https://github.com/JetBrains/kotlin/releases/download/v${KOTLIN_COMPILER_VERSION}/kotlin-compiler-${KOTLIN_COMPILER_VERSION}.zip"
+KOTLIN_COMPILER_DST="/opt/kotlinc-${KOTLIN_COMPILER_VERSION}"
+if [ ! -d "${KOTLIN_COMPILER_DST}" ]; then
+    if /tmp/cached-curl.sh "${KOTLIN_COMPILER_URL}" "${CACHE_DIR}/kotlin-compiler.zip"; then
+        rm -rf /opt/kotlinc
+        unzip -q "${CACHE_DIR}/kotlin-compiler.zip" -d /opt
+        if [ -d /opt/kotlinc ]; then
+            mv /opt/kotlinc "${KOTLIN_COMPILER_DST}"
+            ln -sfn "${KOTLIN_COMPILER_DST}" /opt/kotlinc
+            ln -sfn "${KOTLIN_COMPILER_DST}/bin/kotlinc" /usr/local/bin/kotlinc
+            ln -sfn "${KOTLIN_COMPILER_DST}/bin/kotlin" /usr/local/bin/kotlin
+        fi
+    else
+        echo "W: Kotlin compiler download failed" >&2
+    fi
+fi
+
+# IntelliJ IDEA Community (official Kotlin IDE used in ICPC environments)
+INTELLIJ_ARCHIVE="ideaIC-${INTELLIJ_IDEA_VERSION}.tar.gz"
+INTELLIJ_URL="https://download.jetbrains.com/idea/${INTELLIJ_ARCHIVE}"
+INTELLIJ_DIR="/opt/intellij-idea-community"
+if [ ! -d "${INTELLIJ_DIR}" ]; then
+    if /tmp/cached-curl.sh "${INTELLIJ_URL}" "${CACHE_DIR}/${INTELLIJ_ARCHIVE}"; then
+        extracted_root="$(
+            python3 - "${CACHE_DIR}/${INTELLIJ_ARCHIVE}" <<'PY'
+import sys
+import tarfile
+
+with tarfile.open(sys.argv[1], "r:gz") as archive:
+    for member in archive:
+        root = member.name.split("/", 1)[0].strip()
+        if root:
+            print(root)
+            break
+PY
+        )"
+        tar -zxf "${CACHE_DIR}/${INTELLIJ_ARCHIVE}" -C /opt
+        if [ -n "${extracted_root}" ] && [ -d "/opt/${extracted_root}" ]; then
+            rm -rf "${INTELLIJ_DIR}"
+            mv "/opt/${extracted_root}" "${INTELLIJ_DIR}"
+            ln -sfn "${INTELLIJ_DIR}/bin/idea.sh" /usr/local/bin/idea
+            [ -f "${INTELLIJ_DIR}/bin/idea.png" ] && \
+                cp "${INTELLIJ_DIR}/bin/idea.png" /usr/share/pixmaps/intellij-idea.png
+
+            cat > /usr/share/applications/intellij_idea_community.desktop <<'EOF'
+[Desktop Entry]
+Name=IntelliJ IDEA Community
+Exec=/opt/intellij-idea-community/bin/idea.sh
+Type=Application
+Icon=intellij-idea
+Categories=Development;IDE;
+Terminal=false
+EOF
+        fi
+    else
+        echo "W: IntelliJ IDEA Community download failed" >&2
     fi
 fi
 

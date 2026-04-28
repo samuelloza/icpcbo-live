@@ -2,7 +2,6 @@
 
 set -euo pipefail
 
-# Keep the image lean and avoid host/cloud specific leftovers.
 for pkg in snapd gnome-software-plugin-snap cloud-init popularity-contest; do
     if dpkg-query -W -f='${Status}\n' "${pkg}" 2>/dev/null | grep -q 'install ok installed'; then
         apt-get purge -y "${pkg}"

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Kotlin local</title>
+
+  <style>
+    @font-face {
+      font-family: 'Share';
+      font-style: normal;
+      font-weight: 400;
+      src: local('Share Regular'), local('Share-Regular'),
+        url('../fonts/share-v11-latin-regular.eot?#iefix') format('embedded-opentype'),
+        url('../fonts/share-v11-latin-regular.woff2') format('woff2'),
+        url('../fonts/share-v11-latin-regular.woff') format('woff'),
+        url('../fonts/share-v11-latin-regular.ttf') format('truetype'),
+        url('../fonts/share-v11-latin-regular.svg#Share') format('svg');
+    }
+
+    @font-face {
+      font-family: 'Fira Sans';
+      font-style: normal;
+      font-weight: 400;
+      src: local('Fira Sans Regular'), local('FiraSans-Regular'),
+        url('../fonts/fira-sans-v10-latin-regular.eot?#iefix') format('embedded-opentype'),
+        url('../fonts/fira-sans-v10-latin-regular.woff2') format('woff2'),
+        url('../fonts/fira-sans-v10-latin-regular.woff') format('woff'),
+        url('../fonts/fira-sans-v10-latin-regular.ttf') format('truetype'),
+        url('../fonts/fira-sans-v10-latin-regular.svg#FiraSans') format('svg');
+    }
+
+    body {
+      font-family: 'Fira Sans', sans-serif;
+      font-size: 100%;
+      line-height: 1.5;
+      -webkit-text-size-adjust: 100%;
+      margin: 0;
+      padding: 2em;
+      max-width: 900px;
+    }
+
+    h1,
+    h2 {
+      font-family: 'Share', sans-serif;
+    }
+
+    code {
+      font-family: monospace;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Kotlin local</h1>
+
+  <p>Referencia rápida para compilar y ejecutar Kotlin en esta máquina.</p>
+
+  <h2>Comandos</h2>
+  <ul>
+    <li>Compilar jar: <code>kotlinc Main.kt -include-runtime -d main.jar</code></li>
+    <li>Ejecutar jar: <code>java -jar main.jar</code></li>
+    <li>Compilar estilo ICPC: <code>kotlinc Main.kt -d .</code></li>
+    <li>Ejecutar clase: <code>kotlin -classpath . MainKt</code></li>
+  </ul>
+
+  <h2>Editor recomendado</h2>
+  <p>IntelliJ IDEA Community.</p>
+
+  <h2>Más información local</h2>
+  <ul>
+    <li>Versión instalada: <code>kotlinc -version</code></li>
+    <li><a href="../software.html">Software instalado</a></li>
+    <li><a href="../index.html">Volver a la portada</a></li>
+  </ul>
+</body>
+
+</html>

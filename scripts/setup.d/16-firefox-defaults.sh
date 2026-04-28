@@ -30,6 +30,8 @@ defaultPref("datareporting.policy.dataSubmissionEnabled", false);
 defaultPref("toolkit.telemetry.enabled", false);
 defaultPref("toolkit.telemetry.server", "");
 defaultPref("toolkit.telemetry.unified", false);
+defaultPref("browser.safebrowsing.malware.enabled", false);
+defaultPref("browser.safebrowsing.phishing.enabled", false);
 
 // Disable automatic updates
 defaultPref("app.update.auto", false);

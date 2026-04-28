@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Software instalado</title>
+
+  <style>
+    @font-face {
+      font-family: 'Share';
+      font-style: normal;
+      font-weight: 400;
+      src: local('Share Regular'), local('Share-Regular'),
+        url('fonts/share-v11-latin-regular.eot?#iefix') format('embedded-opentype'),
+        url('fonts/share-v11-latin-regular.woff2') format('woff2'),
+        url('fonts/share-v11-latin-regular.woff') format('woff'),
+        url('fonts/share-v11-latin-regular.ttf') format('truetype'),
+        url('fonts/share-v11-latin-regular.svg#Share') format('svg');
+    }
+
+    @font-face {
+      font-family: 'Fira Sans';
+      font-style: normal;
+      font-weight: 400;
+      src: local('Fira Sans Regular'), local('FiraSans-Regular'),
+        url('fonts/fira-sans-v10-latin-regular.eot?#iefix') format('embedded-opentype'),
+        url('fonts/fira-sans-v10-latin-regular.woff2') format('woff2'),
+        url('fonts/fira-sans-v10-latin-regular.woff') format('woff'),
+        url('fonts/fira-sans-v10-latin-regular.ttf') format('truetype'),
+        url('fonts/fira-sans-v10-latin-regular.svg#FiraSans') format('svg');
+    }
+
+    body {
+      font-family: 'Fira Sans', sans-serif;
+      font-size: 100%;
+      line-height: 1.5;
+      -webkit-text-size-adjust: 100%;
+      margin: 0;
+      padding: 2em;
+      max-width: 900px;
+    }
+
+    h1,
+    h2 {
+      font-family: 'Share', sans-serif;
+    }
+
+    code {
+      font-family: monospace;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Software instalado</h1>
+
+  <p>Herramientas principales disponibles en esta máquina.</p>
+
+  <h2>Lenguajes y herramientas</h2>
+  <ul>
+    <li>C/C++: gcc, g++, clang, gdb, valgrind, cppreference.</li>
+    <li>Java: OpenJDK, javac, Java API local.</li>
+    <li>Python: python3 y documentación local.</li>
+    <li>Kotlin: kotlinc, kotlin, IntelliJ IDEA Community.</li>
+    <li>Editores e IDEs: VS Code, IntelliJ IDEA Community, Eclipse C/C++, KDevelop, Code::Blocks, Geany, Kate, Vim, Neovim, Emacs.</li>
+  </ul>
+
+  <h2>Ver versiones</h2>
+  <ul>
+    <li>C/C++: <code>gcc --version</code>, <code>g++ --version</code>, <code>clang --version</code></li>
+    <li>Java: <code>java -version</code>, <code>javac -version</code></li>
+    <li>Python: <code>python3 --version</code></li>
+    <li>Kotlin: <code>kotlinc -version</code></li>
+    <li>VS Code: <code>code --version</code></li>
+  </ul>
+
+  <h2>Referencias</h2>
+  <ul>
+    <li><a href="cppreference/index.html">C/C++ Reference</a></li>
+    <li><a href="java-docs/">Java API</a></li>
+    <li><a href="python-docs/index.html">Python Documentation</a></li>
+    <li><a href="kotlin/index.html">Kotlin Local</a></li>
+  </ul>
+
+  <p><a href="index.html">Volver a la portada</a></p>
+</body>
+
+</html>
