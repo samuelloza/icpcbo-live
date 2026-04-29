@@ -1,0 +1,13 @@
+# Local agent/runtime state
+.codex
+.omx/
+
+# Local ISO build configuration
+config/iso.local.conf
+
+# VM disk images
+*.qcow2
+
+# Python cache files
+__pycache__/
+*.py[cod]
