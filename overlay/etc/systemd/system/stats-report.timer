@@ -4,6 +4,7 @@ Description=Run stats report every 10 minutes
 [Timer]
 OnBootSec=2min
 OnUnitActiveSec=10min
+Persistent=true
 Unit=stats-report.service
 
 [Install]

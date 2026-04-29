@@ -2,50 +2,50 @@
 
 set -euo pipefail
 
-AUTH_ENV_FILE="/etc/contestiso/auth.env"
-ICP_REPORT_URL="${ICP_REPORT_URL:-}"
 TIMEOUT="10"
-BUFFER_DIR="/var/lib/statsbo/pending"
-LOGIN_STATE_DIR="/home/icpc/.local/state/icpcbo"
+ICP_REPORT_URL=""
 
-if [[ -f "${AUTH_ENV_FILE}" ]]; then
+if [[ -f /etc/contestiso/auth.env ]]; then
     # shellcheck source=/dev/null
-    source "${AUTH_ENV_FILE}"
+    source /etc/contestiso/auth.env
 fi
 
 TIMEOUT="${ICP_REPORT_TIMEOUT:-${TIMEOUT}}"
 
 : "${ICP_REPORT_URL:?ICP_REPORT_URL is required}"
 
-mkdir -p "${BUFFER_DIR}"
+mkdir -p /var/lib/statsbo/pending
 
 DATA_FILE="$(mktemp)"
 LOGS_FILE="$(mktemp)"
 METRICS_FILE="$(mktemp)"
+HARDWARE_FILE="$(mktemp)"
 
 cleanup() {
-    rm -f "${LOGS_FILE}" "${METRICS_FILE}"
+    rm -f "${LOGS_FILE}" "${METRICS_FILE}" "${HARDWARE_FILE}"
 }
 trap cleanup EXIT
 
 /usr/local/bin/stats-logs.sh > "${LOGS_FILE}"
 /usr/local/bin/stats-metrics.sh > "${METRICS_FILE}"
+/usr/local/bin/stats-hardware.sh > "${HARDWARE_FILE}"
 
 /usr/local/bin/stats-build-payload.py \
     "$(/usr/local/bin/stats-machine-id.sh)" \
     "${LOGS_FILE}" \
     "${METRICS_FILE}" \
-    "${LOGIN_STATE_DIR}" > "${DATA_FILE}"
+    "${HARDWARE_FILE}" \
+    "/home/icpc/.local/state/icpcbo" > "${DATA_FILE}"
 
 if ! curl --fail --silent --show-error --max-time "${TIMEOUT}" \
     -X POST -H "Content-Type: application/json" \
     -d @"${DATA_FILE}" "${ICP_REPORT_URL}"; then
-    mv "${DATA_FILE}" "${BUFFER_DIR}/$(date +%s).json"
+    mv "${DATA_FILE}" "/var/lib/statsbo/pending/$(date +%s).json"
 else
     rm -f "${DATA_FILE}"
 fi
 
-for f in "${BUFFER_DIR}"/*.json; do
+for f in /var/lib/statsbo/pending/*.json; do
     [[ ! -f "${f}" ]] && continue
     if curl --fail --silent --show-error --max-time "${TIMEOUT}" \
         -X POST -H "Content-Type: application/json" \

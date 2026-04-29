@@ -2,16 +2,13 @@
 
 set -euo pipefail
 
-LOG_DIR="/var/lib/statsbo"
-LAST_FILE="${LOG_DIR}/last_log_time"
-BOOT_FLAG="${LOG_DIR}/boot_sent"
 NOW="$(date --utc +%Y-%m-%dT%H:%M:%SZ)"
 SINCE="10 minutes ago"
 
-mkdir -p "${LOG_DIR}"
+mkdir -p /var/lib/statsbo
 
-if [[ -f "${LAST_FILE}" ]]; then
-    SINCE="$(cat "${LAST_FILE}")"
+if [[ -f /var/lib/statsbo/last_log_time ]]; then
+    SINCE="$(cat /var/lib/statsbo/last_log_time)"
 fi
 
 BOOT_LOGS_FILE="$(mktemp)"
@@ -26,12 +23,12 @@ trap cleanup EXIT
 journalctl -p err --since "${SINCE}" --no-pager > "${SYS_LOGS_FILE}" 2>/dev/null || true
 journalctl -k -p err --since "${SINCE}" --no-pager > "${KERNEL_LOGS_FILE}" 2>/dev/null || true
 
-if [[ ! -f "${BOOT_FLAG}" ]]; then
+if [[ ! -f /var/lib/statsbo/boot_sent ]]; then
     journalctl -b --no-pager > "${BOOT_LOGS_FILE}" 2>/dev/null || true
-    touch "${BOOT_FLAG}"
+    touch /var/lib/statsbo/boot_sent
 fi
 
-printf '%s\n' "${NOW}" > "${LAST_FILE}"
+printf '%s\n' "${NOW}" > /var/lib/statsbo/last_log_time
 
 /usr/local/bin/stats-build-logs.py \
     "${NOW}" \

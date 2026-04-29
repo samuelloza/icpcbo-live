@@ -4,11 +4,27 @@ set -euo pipefail
 
 CACHE_DIR="/tmp/cache/ides"
 ECLIPSE_CPP_VERSION="2025-03"
-ECLIPSE_INSTALLER_VERSION="2025-06"
 KOTLIN_COMPILER_VERSION="1.9.24"
 INTELLIJ_IDEA_VERSION="2024.2.3"
 
 mkdir -p "${CACHE_DIR}"
+
+# Sublime Text
+if ! command -v subl >/dev/null 2>&1; then
+    if /tmp/cached-curl.sh https://download.sublimetext.com/sublimehq-pub.gpg \
+            /tmp/sublimehq.gpg 2>/dev/null; then
+        gpg --dearmor < /tmp/sublimehq.gpg \
+            > /usr/share/keyrings/sublimehq-archive-keyring.gpg
+        rm -f /tmp/sublimehq.gpg
+        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/sublimehq-archive-keyring.gpg] \
+https://download.sublimetext.com/ apt/stable/" \
+            > /etc/apt/sources.list.d/sublime-text.list
+        apt-get update -qq
+        apt-get install -y sublime-text || echo "W: Sublime Text install failed" >&2
+    else
+        echo "W: Failed to fetch Sublime Text GPG key, skipping" >&2
+    fi
+fi
 
 # Eclipse C/C++
 ECLIPSE_CPP_NAME="eclipse-cpp-${ECLIPSE_CPP_VERSION}-R-linux-gtk-x86_64"

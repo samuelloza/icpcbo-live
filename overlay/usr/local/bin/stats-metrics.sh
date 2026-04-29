@@ -8,8 +8,7 @@ MEM_FREE="$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)"
 
 cat <<EOF
 {
-  "cpu_load": "${CPU_LOAD}",
-  "mem_used": "$((MEM_TOTAL - MEM_FREE))",
-  "mem_total": "${MEM_TOTAL}"
+  "cpu_load": ${CPU_LOAD},
+  "mem_used_mb": $((MEM_TOTAL - MEM_FREE))
 }
 EOF

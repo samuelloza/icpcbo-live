@@ -13,6 +13,12 @@ gnome-terminal
 evince
 file-roller
 gnome-themes-extra
+dbus-user-session
+libgtk-3-bin
+libxi6
+libxrender1
+libxtst6
+libfontconfig1
 
 # Wi-Fi and networking
 network-manager
@@ -70,21 +76,30 @@ python-is-python3
 # --- Development tools and IDEs ---
 firefox-esr
 git
+ddd
+gdb
+valgrind
+konsole
+byobu
 geany
 geany-plugin-automark
 geany-plugin-lineoperations
 geany-plugin-overview
 emacs
 gedit
+joe
 kate
+kdevelop
 nano
 vim
 vim-gtk3
+neovim
 make
 gcc
 g++
 openjdk-21-jdk
 openjdk-21-doc
+ruby
 codeblocks
 htop
 

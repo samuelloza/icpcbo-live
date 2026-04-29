@@ -12,11 +12,9 @@ def read_text(path: str) -> str:
 def main() -> None:
     payload = {
         "timestamp": sys.argv[1],
-        "logs": {
-            "boot": read_text(sys.argv[2]),
-            "system_errors": read_text(sys.argv[3]),
-            "kernel_errors": read_text(sys.argv[4]),
-        },
+        "boot": read_text(sys.argv[2]),
+        "system_errors": read_text(sys.argv[3]),
+        "kernel_errors": read_text(sys.argv[4]),
     }
 
     print(json.dumps(payload, ensure_ascii=False))

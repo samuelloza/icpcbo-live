@@ -45,6 +45,24 @@
       font-family: 'Share', sans-serif;
     }
 
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      max-width: 900px;
+    }
+
+    th,
+    td {
+      border: 1px solid #cccccc;
+      padding: 0.5em;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f2f2f2;
+    }
+
     code {
       font-family: monospace;
     }
@@ -54,24 +72,46 @@
 <body>
   <h1>Software instalado</h1>
 
-  <p>Herramientas principales disponibles en esta máquina.</p>
+  <p>Tabla de herramientas disponibles en esta máquina.</p>
 
-  <h2>Lenguajes y herramientas</h2>
-  <ul>
-    <li>C/C++: gcc, g++, gdb, cppreference.</li>
-    <li>Java: OpenJDK, javac, Java API local.</li>
-    <li>Python: python3 y documentación local.</li>
-    <li>Kotlin: kotlinc, kotlin, IntelliJ IDEA Community.</li>
-    <li>Editores e IDEs: VS Code, IntelliJ IDEA Community, Eclipse C/C++, Code::Blocks, Geany, Kate, Vim, Emacs, Gedit.</li>
-  </ul>
+  <table>
+    <tr>
+      <th>Categoría</th>
+      <th>Herramienta / Recurso</th>
+    </tr>
+    <tr>
+      <td>Compiladores</td>
+      <td>gcc, g++, javac, kotlinc</td>
+    </tr>
+    <tr>
+      <td>Intérpretes / Runtimes</td>
+      <td>java, kotlin, python3</td>
+    </tr>
+    <tr>
+      <td>Editores / IDEs</td>
+      <td>Code::Blocks, Eclipse, Emacs, Geany, Gedit, IntelliJ IDEA Community, Joe, Kate, KDevelop, Nano, Neovim, Sublime Text, Vim, gVim, Visual Studio Code</td>
+    </tr>
+    <tr>
+      <td>Documentación</td>
+      <td>C/C++ Reference, Java API, Python Documentation, Kotlin Local</td>
+    </tr>
+    <tr>
+      <td>Otras aplicaciones</td>
+      <td>Byobu, Firefox, GNOME Terminal, Konsole</td>
+    </tr>
+    <tr>
+      <td>Herramientas de apoyo</td>
+      <td>DDD, GDB, git, make, Ruby, Valgrind</td>
+    </tr>
+  </table>
 
-  <h2>Ver versiones</h2>
+  <h2>Ver nombres desde terminal</h2>
   <ul>
-    <li>C/C++: <code>gcc --version</code>, <code>g++ --version</code></li>
-    <li>Java: <code>java -version</code>, <code>javac -version</code></li>
-    <li>Python: <code>python3 --version</code></li>
-    <li>Kotlin: <code>kotlinc -version</code></li>
-    <li>VS Code: <code>code --version</code></li>
+    <li>C/C++: <code>gcc</code>, <code>g++</code></li>
+    <li>Java: <code>java</code>, <code>javac</code></li>
+    <li>Python: <code>python3</code></li>
+    <li>Kotlin: <code>kotlin</code>, <code>kotlinc</code></li>
+    <li>Editor: <code>code</code>, <code>vim</code>, <code>emacs</code></li>
   </ul>
 
   <h2>Referencias</h2>

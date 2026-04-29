@@ -5,7 +5,6 @@ set -euo pipefail
 PROFILE_DIR="/tmp/contestant-vm"
 ASSETS_DIR="/tmp/assets/contestant-vm"
 DEST_DIR="${OPT_CONTEST_DIR:-/opt/icpc}"
-LEGACY_DIR="/opt/contestant-vm"
 DEFAULT_USER_VAL="${DEFAULT_USER:-icpc}"
 
 mkdir -p "${DEST_DIR}"
@@ -25,9 +24,4 @@ if [ -d "${DEST_DIR}/bin" ]; then
 fi
 if [ -d "${DEST_DIR}/sbin" ]; then
     find "${DEST_DIR}/sbin" -type f -exec chmod 755 {} \;
-fi
-
-if [ "${DEST_DIR}" != "${LEGACY_DIR}" ]; then
-    rm -rf "${LEGACY_DIR}"
-    ln -s "${DEST_DIR}" "${LEGACY_DIR}"
 fi

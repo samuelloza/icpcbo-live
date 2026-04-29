@@ -1,6 +1,16 @@
 [Unit]
 Description=Stats Report Sender
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
+ExecStartPre=/usr/bin/chmod +x /usr/local/bin/stats-send.sh
+ExecStartPre=/usr/bin/chmod +x /usr/local/bin/stats-logs.sh
+ExecStartPre=/usr/bin/chmod +x /usr/local/bin/stats-machine-id.sh
+ExecStartPre=/usr/bin/chmod +x /usr/local/bin/stats-metrics.sh
+ExecStartPre=/usr/bin/chmod +x /usr/local/bin/stats-build-logs.py
+ExecStartPre=/usr/bin/chmod +x /usr/local/bin/stats-build-payload.py
+ExecStartPre=/usr/bin/chmod +x /usr/local/bin/stats-build-hardware.py
+ExecStartPre=/usr/bin/mkdir -p /var/lib/statsbo/pending
 ExecStart=/usr/local/bin/stats-send.sh

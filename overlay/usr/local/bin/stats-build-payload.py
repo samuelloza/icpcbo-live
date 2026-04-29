@@ -17,7 +17,8 @@ def main() -> None:
     machine_id = sys.argv[1]
     logs_file = sys.argv[2]
     metrics_file = sys.argv[3]
-    login_state_dir = sys.argv[4]
+    hardware_file = sys.argv[4]
+    login_state_dir = sys.argv[5]
 
     with open(logs_file, encoding="utf-8") as fh:
         logs = json.load(fh)
@@ -25,16 +26,19 @@ def main() -> None:
     with open(metrics_file, encoding="utf-8") as fh:
         metrics = json.load(fh)
 
+    with open(hardware_file, encoding="utf-8") as fh:
+        hardware = json.load(fh)
+
     login = {
         "username": read_optional(os.path.join(login_state_dir, "username.txt")),
         "user_id": read_optional(os.path.join(login_state_dir, "user-id.txt")),
-        "display_name": read_optional(os.path.join(login_state_dir, "display-name.txt")),
     }
 
     payload = {
         "machine_id": machine_id,
         "data": {
             "login": login,
+            "hardware": hardware,
             "metrics": metrics,
             "logs": logs,
         },
