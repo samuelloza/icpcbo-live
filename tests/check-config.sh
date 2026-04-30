@@ -45,6 +45,7 @@ unset META_DISTRO_NAME
 unset META_DISTRO_VERSION
 unset CONTEST_DIR
 unset HOSTNAME
+unset SUPPORTED_LOCALES
 
 # shellcheck source=/dev/null
 source "${PROJECT_DIR}/config/iso.conf"
@@ -56,11 +57,20 @@ assert_equals "ICPC Bolivia Debian" "${META_DISTRO_NAME}" "META_DISTRO_NAME"
 assert_equals "13" "${META_DISTRO_VERSION}" "META_DISTRO_VERSION"
 assert_equals "icpc_bo" "${CONTEST_DIR}" "CONTEST_DIR"
 assert_equals "contest" "${HOSTNAME}" "HOSTNAME"
+assert_equals "en_US.UTF-8 es_ES.UTF-8 es_BO.UTF-8" "${SUPPORTED_LOCALES}" "SUPPORTED_LOCALES"
+
+(
+    APT_PROXY="http://proxy.example:3142"
+    # shellcheck source=/dev/null
+    source "${PROJECT_DIR}/config/iso.conf"
+    assert_equals "http://proxy.example:3142" "${APT_PROXY}" "APT_PROXY environment override"
+)
 
 assert_file "scripts/setup.d/05-desktop-defaults.sh"
 assert_file "scripts/setup.d/09-full-install-bootstrap-config.sh"
 assert_file "scripts/setup.d/23-update-config.sh"
 assert_file "scripts/setup.d/80-apt-policy.sh"
+assert_file "scripts/setup.d/89-prune-locales.sh"
 assert_file "scripts/setup.d/90-initramfs.sh"
 assert_file "overlay/etc/initramfs-tools/hooks/contest-overlay-tools"
 assert_file "overlay/etc/systemd/system/contest-deploy.service"
@@ -96,6 +106,7 @@ assert_executable "overlay/usr/lib/contest/lib/fs.sh"
 assert_executable "overlay/usr/lib/contest/lib/runtime-layout.sh"
 assert_executable "scripts/setup.d/09-full-install-bootstrap-config.sh"
 assert_executable "scripts/setup.d/23-update-config.sh"
+assert_executable "scripts/setup.d/89-prune-locales.sh"
 assert_executable "remote/full-install-bootstrap.sh"
 assert_executable "remote/full-install.sh"
 assert_executable "scripts/run-hook-dir.sh"

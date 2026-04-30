@@ -9,7 +9,10 @@ cat > /etc/hosts <<HOSTS
 ::1 localhost ip6-localhost ip6-loopback
 HOSTS
 
-grep -q "^${LOCALE}" /etc/locale.gen || echo "${LOCALE} UTF-8" >> /etc/locale.gen
+: > /etc/locale.gen
+for locale in ${SUPPORTED_LOCALES}; do
+    echo "${locale} UTF-8" >> /etc/locale.gen
+done
 locale-gen
 update-locale LANG="${LOCALE}"
 
