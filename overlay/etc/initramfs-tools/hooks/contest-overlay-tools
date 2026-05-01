@@ -52,3 +52,7 @@ copy_contest_binary mke2fs /usr/lib/contest-initramfs/bin/mke2fs.real
 if [ -f /etc/mke2fs.conf ]; then
     copy_file config /etc/mke2fs.conf
 fi
+
+if [ -f /etc/contest/ascii-wallpaper.txt ]; then
+    copy_file config /etc/contest/ascii-wallpaper.txt
+fi

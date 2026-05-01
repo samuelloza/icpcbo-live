@@ -29,6 +29,16 @@ _warn() {
     echo "W: $*" >&2
 }
 
+show_boot_banner() {
+    local banner="/etc/contest/ascii-wallpaper.txt"
+
+    [ -f "${banner}" ] || return 0
+
+    echo "" >&2
+    cat "${banner}" >&2 || true
+    echo "" >&2
+}
+
 parse_contest_cmdline() {
     CONTEST_DIR="/contest"
     CONTEST_ROOT="filesystem.squashfs"
@@ -71,12 +81,41 @@ cmdline_flag_enabled() {
     esac
 }
 
-wait_for_reboot_key() {
-    echo "  Presiona una tecla para reiniciar..." >&2
-    if ! read -r -n 1 _ < /dev/console 2>/dev/null; then
-        read -r _ < /dev/console
+force_reboot() {
+    local reason="${1:-requested}"
+
+    if [ "${CONTEST_TEST_NO_REBOOT:-0}" = "1" ]; then
+        CONTEST_TEST_REBOOT_REASON="${reason}"
+        export CONTEST_TEST_REBOOT_REASON
+        return 0
     fi
+
     reboot -f
+    sleep 2
+    echo b > /proc/sysrq-trigger 2>/dev/null || true
+}
+
+wait_for_reboot_key() {
+    local key_dev="${CONTEST_TEST_KEY_DEV:-/dev/console}"
+    local old_state=""
+
+    [ -z "${CONTEST_TEST_KEY_DEV:-}" ] && [ -r /dev/tty ] && key_dev="/dev/tty"
+
+    echo "  Presiona una tecla para reiniciar..." >&2
+    if command -v stty >/dev/null 2>&1 && command -v dd >/dev/null 2>&1; then
+        old_state="$(stty -g < "${key_dev}" 2>/dev/null || true)"
+        if [ -n "${old_state}" ] && stty raw -echo < "${key_dev}" 2>/dev/null; then
+            dd bs=1 count=1 of=/dev/null < "${key_dev}" 2>/dev/null || true
+            stty "${old_state}" < "${key_dev}" 2>/dev/null || true
+            force_reboot "key"
+            return 0
+        fi
+        [ -n "${old_state}" ] && stty "${old_state}" < "${key_dev}" 2>/dev/null || true
+    fi
+
+    echo "  Presiona ENTER para reiniciar..." >&2
+    read -r _ < "${key_dev}" 2>/dev/null || true
+    force_reboot "enter"
 }
 
 reboot_after_delay() {
@@ -91,7 +130,7 @@ reboot_after_delay() {
 
     echo "  Reiniciando en ${seconds} segundos..." >&2
     sleep "${seconds}"
-    reboot -f
+    force_reboot "delayed"
 }
 
 cleanup_message_and_reboot() {
@@ -275,7 +314,7 @@ check_min_ram() {
         echo "" >&2
         echo "  Presiona ENTER para reiniciar..." >&2
         read -r _ < /dev/console
-        reboot -f
+        force_reboot "low-ram"
     fi
 }
 
@@ -362,7 +401,7 @@ _install_error() {
     echo "" >&2
     echo "  Presiona ENTER para reiniciar..." >&2
     read -r _ < /dev/console
-    reboot -f
+    force_reboot "install-error"
 }
 
 _find_install_target() {
@@ -904,6 +943,7 @@ mount_root_image() {
 }
 
 mountroot() {
+    show_boot_banner
     parse_contest_cmdline
     check_min_ram
 
