@@ -11,9 +11,9 @@ DISPLAY_FILE="/home/icpc/.local/state/icpcbo/display-name.txt"
 RAW_RESPONSE_FILE="/home/icpc/.local/state/icpcbo/auth-response.json"
 WALLPAPER_FILE="/home/icpc/.local/state/icpcbo/login-wallpaper.svg"
 AUTH_ENV_FILE="/etc/contestiso/auth.env"
-BUILD_PAYLOAD_PY="/opt/icpc/bin/icpcbo-login-build-payload.py"
-PARSE_RESPONSE_PY="/opt/icpc/bin/icpcbo-login-parse-response.py"
-WRITE_WALLPAPER_PY="/opt/icpc/bin/icpcbo-login-write-wallpaper.py"
+BUILD_PAYLOAD_PY="/opt/icpc/bin/contestants-login-build-payload.py"
+PARSE_RESPONSE_PY="/opt/icpc/bin/contestants-login-parse-response.py"
+WRITE_WALLPAPER_PY="/opt/icpc/bin/contestants-login-write-wallpaper.py"
 
 AUTH_SERVICE_URL="${AUTH_SERVICE_URL:-}"
 AUTH_SERVICE_TIMEOUT="${AUTH_SERVICE_TIMEOUT:-5}"
@@ -26,7 +26,12 @@ fi
 require_commands() {
     local cmd
 
-    for cmd in zenity curl python3 gsettings; do
+    if ! command -v zenity >/dev/null 2>&1; then
+        printf 'Falta la dependencia requerida: zenity\n' >&2
+        exit 4
+    fi
+
+    for cmd in curl python3 gsettings; do
         if ! command -v "${cmd}" >/dev/null 2>&1; then
             zenity --error "${ZEN_WIDTH}" --title "${ZEN_TITLE}" \
                 --text="Falta la dependencia requerida: ${cmd}"
