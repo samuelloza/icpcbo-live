@@ -21,7 +21,10 @@ fi
 apt-get autoremove -y --purge || true
 
 rm -f /etc/apt/apt.conf.d/01proxy || true
-apt-get clean
-rm -rf /var/lib/apt/lists/*
-rm -rf /var/log/*
-rm -rf /tmp/* /var/tmp/*
+
+# /var/cache/apt/archives and /tmp/download-cache are host cache bind mounts
+
+find /var/lib/apt/lists -mindepth 1 -exec rm -rf {} +
+find /var/log -mindepth 1 -exec rm -rf {} +
+find /tmp -mindepth 1 ! -name download-cache -exec rm -rf {} +
+find /var/tmp -mindepth 1 -exec rm -rf {} +

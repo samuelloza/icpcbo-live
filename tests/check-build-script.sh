@@ -62,6 +62,13 @@ assert_executable "${ROOTFS_DIR}/tmp/cached-curl.sh"
 assert_executable "${ROOTFS_DIR}/tmp/install-and-customize-chroot.sh"
 assert_executable "${ROOTFS_DIR}/tmp/trim-chroot.sh"
 
+if grep -Eq '^[[:space:]]*apt-get[[:space:]]+clean' "${PROJECT_DIR}/scripts/build/trim-chroot.sh"; then
+    fail "trim-chroot.sh must not clean the host-mounted apt cache"
+fi
+
+grep -q '! -name download-cache' "${PROJECT_DIR}/scripts/build/trim-chroot.sh" || \
+    fail "trim-chroot.sh must preserve the host-mounted download cache"
+
 OUTPUT_DIR="${tmp_dir}/output"
 stub_bin_dir="${tmp_dir}/bin"
 grub_mkrescue_calls="${tmp_dir}/grub-mkrescue-calls.txt"
