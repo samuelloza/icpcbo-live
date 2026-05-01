@@ -124,6 +124,32 @@ assert_exists "/dev/null" "sanity placeholder"
 [[ "${CONTEST_TEST_REBOOT_DELAY:-}" = "5" ]] || fail "Expected install_complete_message_and_reboot to use a 5 second reboot delay"
 unset CONTEST_TEST_NO_REBOOT
 
+keybin="${tmp_dir}/keybin"
+mkdir -p "${keybin}"
+cat > "${keybin}/stty" <<'EOF_STTY'
+#!/bin/sh
+if [ "${1:-}" = "-g" ]; then
+    echo sane
+fi
+exit 0
+EOF_STTY
+cat > "${keybin}/dd" <<'EOF_DD'
+#!/bin/sh
+cat >/dev/null
+exit 0
+EOF_DD
+chmod +x "${keybin}/stty" "${keybin}/dd"
+
+printf 'x' > "${tmp_dir}/console-input"
+PATH="${keybin}:${PATH}"
+CONTEST_TEST_NO_REBOOT="1"
+CONTEST_TEST_KEY_DEV="${tmp_dir}/console-input"
+wait_for_reboot_key
+[[ "${CONTEST_TEST_REBOOT_REASON:-}" = "key" ]] || fail "Expected wait_for_reboot_key to reboot after a single key"
+unset CONTEST_TEST_REBOOT_REASON
+unset CONTEST_TEST_KEY_DEV
+unset CONTEST_TEST_NO_REBOOT
+
 FOUND_FSTYPE="iso9660"
 CONTEST_INSTALL_MODE="live"
 CONTEST_REINSTALL="0"

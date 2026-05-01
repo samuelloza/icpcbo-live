@@ -31,17 +31,6 @@ if [ "${#PKGS[@]}" -gt 0 ]; then
     apt-get install -y "${PKGS[@]}"
 fi
 
-# Instala VS Code (siempre la versión estable más reciente). La primera pasada
-# puede fallar por dependencias no resueltas; apt-get -f install las corrige y
-# luego la segunda pasada completa la instalación.
-/tmp/cached-curl.sh "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-x64" \
-    /tmp/code.deb
-apt-get install -y /tmp/code.deb || {
-    apt-get -f install -y
-    apt-get install -y /tmp/code.deb
-}
-rm -f /tmp/code.deb
-
 /tmp/run-hook-dir.sh /tmp/setup.d
 
 # Asegura que el usuario por defecto exista incluso si los hooks fueron
