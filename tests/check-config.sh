@@ -80,7 +80,6 @@ assert_file "scripts/setup.d/common/23-update-config.sh"
 assert_file "scripts/setup.d/common/80-apt-policy.sh"
 assert_file "scripts/setup.d/common/89-prune-locales.sh"
 assert_file "scripts/setup.d/common/90-initramfs.sh"
-assert_file "overlay/etc/contest/ascii-wallpaper.txt"
 assert_file "overlay/etc/initramfs-tools/hooks/contest-overlay-tools"
 assert_file "overlay/etc/systemd/system/contest-deploy.service"
 assert_file "overlay/etc/systemd/system/contest-full-install.service"
@@ -254,8 +253,6 @@ grep -q 'copy_required_binary truncate' "${PROJECT_DIR}/overlay/etc/initramfs-to
     fail "initramfs hook must bundle truncate for first-boot overlay creation"
 grep -q 'copy_contest_binary mke2fs /usr/lib/contest-initramfs/bin/mke2fs.real' "${PROJECT_DIR}/overlay/etc/initramfs-tools/hooks/contest-overlay-tools" || \
     fail "initramfs hook must bundle mke2fs for first-boot overlay creation"
-grep -q 'copy_file config /etc/contest/ascii-wallpaper.txt' "${PROJECT_DIR}/overlay/etc/initramfs-tools/hooks/contest-overlay-tools" || \
-    fail "initramfs hook must bundle the console boot banner"
 
 search_paths=()
 for path in \

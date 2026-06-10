@@ -29,16 +29,6 @@ _warn() {
     echo "W: $*" >&2
 }
 
-show_boot_banner() {
-    local banner="/etc/contest/ascii-wallpaper.txt"
-
-    [ -f "${banner}" ] || return 0
-
-    echo "" >&2
-    cat "${banner}" >&2 || true
-    echo "" >&2
-}
-
 parse_contest_cmdline() {
     CONTEST_DIR="/contest"
     CONTEST_ROOT="filesystem.squashfs"
@@ -95,6 +85,29 @@ force_reboot() {
     echo b > /proc/sysrq-trigger 2>/dev/null || true
 }
 
+stop_for_debug() {
+    local reason="${1:-boot-error}"
+
+    if [ "${CONTEST_TEST_NO_REBOOT:-0}" = "1" ]; then
+        CONTEST_TEST_STOP_REASON="${reason}"
+        export CONTEST_TEST_STOP_REASON
+        return 0
+    fi
+
+    echo "" >&2
+    echo "  No se reiniciara automaticamente." >&2
+    echo "" >&2
+
+    # initramfs-tools puede reiniciar o apagar si recibió panic= en el
+    panic=""
+    panic "${reason}"
+
+    # detenida en vez de continuar con un estado incompleto o reiniciarla.
+    while :; do
+        sleep 3600
+    done
+}
+
 wait_for_reboot_key() {
     local key_dev="${CONTEST_TEST_KEY_DEV:-/dev/console}"
     local old_state=""
@@ -133,7 +146,24 @@ reboot_after_delay() {
     force_reboot "delayed"
 }
 
-cleanup_message_and_reboot() {
+cleanup_message_and_stop() {
+    local title="$1"
+    shift
+
+    echo "" >&2
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
+    echo "  ${title}" >&2
+    echo "" >&2
+    while [ "$#" -gt 0 ]; do
+        echo "  $1" >&2
+        shift
+    done
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
+    echo "" >&2
+    stop_for_debug "${title}"
+}
+
+success_message_and_reboot() {
     local title="$1"
     shift
 
@@ -307,14 +337,12 @@ check_min_ram() {
     if [ "${total_mb}" -lt "${CONTEST_MIN_RAM_MB}" ]; then
         echo "" >&2
         echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
-        echo "  RAM INSUFICIENTE PARA ICPC BOLIVIA" >&2
+        echo "  RAM INSUFICIENTE PARA LA ISO" >&2
         echo "" >&2
         echo "  Detectada: ${total_mb} MB" >&2
         echo "  Requerida: ${CONTEST_MIN_RAM_MB} MB" >&2
         echo "" >&2
-        echo "  Presiona ENTER para reiniciar..." >&2
-        read -r _ < /dev/console
-        force_reboot "low-ram"
+        stop_for_debug "RAM insuficiente: ${total_mb} MB disponibles, ${CONTEST_MIN_RAM_MB} MB requeridos"
     fi
 }
 
@@ -399,119 +427,129 @@ _install_error() {
     echo "    - Conecta un disco con mas espacio disponible" >&2
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
     echo "" >&2
-    echo "  Presiona ENTER para reiniciar..." >&2
-    read -r _ < /dev/console
-    force_reboot "install-error"
+    stop_for_debug "Error de instalacion persistente: $*"
 }
 
-_find_install_target() {
+_scan_install_partitions() {
     local source_dev="$1"
-    local real free_kb free_gb
-    local found_block=0   # disco detectado como dispositivo de bloque
-    local found_mount=0   # al menos una particion se pudo montar
+    local records="$2"
     local candidates="/run/contest-install-targets"
+    local real detected_fstype mount_fstype mount_types mode mnt_opts
+    local total_kb free_kb status mounted
 
     mkdir -p /run/contest-install-probe
     collect_unique_block_candidates "${candidates}" "${source_dev}"
+    : > "${records}"
 
-    _log "Buscando particion destino (>= 10 GB libres)..."
     while read -r real; do
         [ -n "${real}" ] || continue
-        found_block=1
-        _log "  disco detectado: ${real}"
 
-        for fstype in ext4 xfs ext3 ntfs3 ntfs; do
-            local mnt_opts
-            mnt_opts="$(mount_opts_for_initramfs_fstype "${fstype}" rw)"
+        detected_fstype="$(blkid -s TYPE -o value "${real}" 2>/dev/null || true)"
+        case "${detected_fstype}" in
+            ext4|ext3|xfs)
+                mount_types="${detected_fstype}"
+                ;;
+            ntfs|ntfs3)
+                mount_types="ntfs3 ntfs"
+                ;;
+            *)
+                printf '%s|%s|0|0|NO COMPATIBLE\n' \
+                    "${real}" "${detected_fstype:--}" >> "${records}"
+                continue
+                ;;
+        esac
 
-            if mount -t "${fstype}" -o "${mnt_opts}" "${real}" /run/contest-install-probe 2>/dev/null; then
-                found_mount=1
-                free_kb=$(df -k /run/contest-install-probe 2>/dev/null | awk 'NR==2 {print $4}')
-                umount /run/contest-install-probe
-                if [ "${free_kb:-0}" -ge "${AUTOINSTALL_MIN_FREE_KB}" ]; then
-                    free_gb=$(( free_kb / 1024 / 1024 ))
-                    _log "  particion destino OK: ${real} (${fstype}, ${free_gb} GB libres)"
-                    INSTALL_DEV="${real}"
-                    INSTALL_FSTYPE="${fstype}"
-                    rm -f "${candidates}"
-                    rmdir /run/contest-install-probe 2>/dev/null || true
-                    return 0
-                else
-                    _warn "  ${real} (${fstype}): $(( free_kb / 1024 )) MB libres — necesita >= 10240 MB"
+        mounted=0
+        mount_fstype="${detected_fstype}"
+        status="NO MONTABLE"
+        total_kb=0
+        free_kb=0
+
+        for mode in rw ro; do
+            for mount_fstype in ${mount_types}; do
+                mnt_opts="$(mount_opts_for_initramfs_fstype "${mount_fstype}" "${mode}")"
+                if mount -t "${mount_fstype}" -o "${mnt_opts}" "${real}" /run/contest-install-probe 2>/dev/null; then
+                    total_kb="$(df -k /run/contest-install-probe 2>/dev/null | awk 'NR==2 {print $2}')"
+                    free_kb="$(df -k /run/contest-install-probe 2>/dev/null | awk 'NR==2 {print $4}')"
+                    umount /run/contest-install-probe 2>/dev/null || true
+                    mounted=1
+                    if [ "${mode}" = "ro" ]; then
+                        status="BLOQUEADA/SOLO LECTURA"
+                    elif [ "${free_kb:-0}" -ge "${AUTOINSTALL_MIN_FREE_KB}" ]; then
+                        status="APTA"
+                    else
+                        status="SIN ESPACIO"
+                    fi
+                    break 2
                 fi
-            fi
+            done
         done
+
+        if [ "${mounted}" = "0" ]; then
+            mount_fstype="${detected_fstype}"
+        fi
+        printf '%s|%s|%s|%s|%s\n' \
+            "${real}" "${mount_fstype}" "${total_kb:-0}" "${free_kb:-0}" "${status}" >> "${records}"
     done < "${candidates}"
 
     rm -f "${candidates}"
     rmdir /run/contest-install-probe 2>/dev/null || true
+}
+
+_find_install_target() {
+    local source_dev="$1"
+    local real fstype total_kb free_kb status
+    local total_gb free_gb
+    local found_block=0 found_mount=0
+    local best_free_kb=0
+    local records="${CONTEST_INSTALL_RECORDS:-/run/contest-install-records}"
+
+    INSTALL_DEV=""
+    INSTALL_FSTYPE=""
+
+    echo "" >&2
+    echo "  PARTICIONES DETECTADAS" >&2
+    printf '  %-18s %-8s %10s %10s  %s\n' \
+        "DISPOSITIVO" "FORMATO" "TOTAL" "LIBRE" "ESTADO" >&2
+    printf '  %-18s %-8s %10s %10s  %s\n' \
+        "------------------" "--------" "----------" "----------" "------------------------" >&2
+
+    _scan_install_partitions "${source_dev}" "${records}"
+
+    while IFS='|' read -r real fstype total_kb free_kb status; do
+        [ -n "${real}" ] || continue
+        found_block=1
+        total_gb=$(( ${total_kb:-0} / 1024 / 1024 ))
+        free_gb=$(( ${free_kb:-0} / 1024 / 1024 ))
+
+        case "${status}" in
+            APTA|SIN\ ESPACIO) found_mount=1 ;;
+        esac
+
+        printf '  %-18s %-8s %7s GB %7s GB  %s\n' \
+            "${real}" "${fstype:--}" "${total_gb}" "${free_gb}" "${status}" >&2
+
+        if [ "${status}" = "APTA" ] && [ "${free_kb:-0}" -gt "${best_free_kb}" ]; then
+            best_free_kb="${free_kb}"
+            INSTALL_DEV="${real}"
+            INSTALL_FSTYPE="${fstype}"
+        fi
+    done < "${records}"
+    rm -f "${records}"
+
+    echo "" >&2
+    if [ -n "${INSTALL_DEV}" ]; then
+        _log "Particion elegida: ${INSTALL_DEV} (${INSTALL_FSTYPE}, $(( best_free_kb / 1024 )) MB libres)"
+        return 0
+    fi
 
     if [ "${found_block}" = "0" ]; then
         INSTALL_ERROR="No se detecto ningun disco en el sistema.\nVerifica que el disco este conectado y sea reconocido por el hardware."
     elif [ "${found_mount}" = "0" ]; then
-        INSTALL_ERROR="Se detecto un disco pero no se pudo leer ninguna particion.\nEl disco puede estar sin particionar, tener un filesystem no soportado, o estar danado."
+        INSTALL_ERROR="Se detectaron particiones, pero todas estan bloqueadas, no son compatibles o no se pueden montar."
     else
         INSTALL_ERROR="Se encontraron particiones pero ninguna tiene espacio suficiente.\nSe necesitan >= 10 GB libres en una sola particion."
     fi
-    return 1
-}
-
-_scan_disks() {
-    # Muestra todos los discos detectados con su espacio disponible.
-    # Retorna 0 si hay al menos uno con >= 10 GB, 1 si ninguno sirve.
-    local source_dev="$1"
-    local real free_kb free_gb total_kb total_gb
-    local found_block=0 found_ok=0
-    local candidates="/run/contest-disk-candidates"
-
-    echo "" >&2
-    echo "  ┌─────────────────────────────────────────────────────┐" >&2
-    echo "  │   <()        DISCOS DETECTADOS        <()           │" >&2
-    echo "  └─────────────────────────────────────────────────────┘" >&2
-    echo "" >&2
-
-    mkdir -p /run/contest-disk-scan
-    collect_unique_block_candidates "${candidates}" "${source_dev}"
-
-    while read -r real; do
-        [ -n "${real}" ] || continue
-        found_block=1
-
-        local mounted=0
-        for fstype in ext4 xfs ext3 ntfs3 ntfs vfat exfat; do
-            local mnt_opts
-            mnt_opts="$(mount_opts_for_initramfs_fstype "${fstype}" rw)"
-            if mount -t "${fstype}" -o "${mnt_opts}" "${real}" /run/contest-disk-scan 2>/dev/null; then
-                free_kb=$(df -k  /run/contest-disk-scan 2>/dev/null | awk 'NR==2 {print $4}')
-                total_kb=$(df -k /run/contest-disk-scan 2>/dev/null | awk 'NR==2 {print $2}')
-                umount /run/contest-disk-scan
-                free_gb=$(( free_kb  / 1024 / 1024 ))
-                total_gb=$(( total_kb / 1024 / 1024 ))
-                if [ "${free_kb:-0}" -ge "${AUTOINSTALL_MIN_FREE_KB}" ]; then
-                    echo "  [OK] ${real}  (${fstype})  total: ${total_gb} GB  libre: ${free_gb} GB  ← APTO" >&2
-                    found_ok=1
-                else
-                    echo "  [--] ${real}  (${fstype})  total: ${total_gb} GB  libre: ${free_gb} GB  (necesita >= 10 GB)" >&2
-                fi
-                mounted=1
-                break
-            fi
-        done
-
-        if [ "${mounted}" = "0" ]; then
-            echo "  [??] ${real}  no se pudo leer (sin particion o formato no soportado)" >&2
-        fi
-    done < "${candidates}"
-
-    echo "" >&2
-    rm -f "${candidates}"
-    rmdir /run/contest-disk-scan 2>/dev/null || true
-
-    if [ "${found_block}" = "0" ]; then
-        echo "  No se detecto ningun disco en el sistema." >&2
-    fi
-    echo "" >&2
-    [ "${found_ok}" = "1" ] && return 0
     return 1
 }
 
@@ -539,7 +577,7 @@ find_existing_install() {
                         ext4|xfs|ext3) CONTEST_PERSIST=on ;;
                         *) CONTEST_PERSIST=auto ;;
                     esac
-                    _log "Instalacion portable existente detectada en ${real} — reutilizando."
+                    _log "Instalacion portable existente detectada en ${real} - reutilizando."
                     return 0
                 fi
                 umount /run/contest-existing-scan 2>/dev/null || true
@@ -594,7 +632,7 @@ handle_install_cleanup_request() {
     if [ "${FOUND_FSTYPE}" = "iso9660" ]; then
         _log "Buscando instalacion portable para borrar..."
         if ! find_existing_install_target; then
-            cleanup_message_and_reboot \
+            cleanup_message_and_stop \
                 "NO SE ENCONTRO INSTALACION PORTABLE" \
                 "No hay archivos de instalacion para borrar."
         fi
@@ -611,7 +649,7 @@ handle_install_cleanup_request() {
     _log "Montando ${cleanup_dev} para borrar archivos de instalacion..."
     if ! mount -t "${cleanup_fstype}" -o "${mnt_opts}" "${cleanup_dev}" /run/contest-cleanup-dst 2>/dev/null; then
         rmdir /run/contest-cleanup-dst 2>/dev/null || true
-        cleanup_message_and_reboot \
+        cleanup_message_and_stop \
             "ERROR AL BORRAR INSTALACION" \
             "No se pudo montar ${cleanup_dev} para escritura."
     fi
@@ -620,7 +658,7 @@ handle_install_cleanup_request() {
     if ! portable_install_present_at /run/contest-cleanup-dst; then
         umount /run/contest-cleanup-dst 2>/dev/null || true
         rmdir /run/contest-cleanup-dst 2>/dev/null || true
-        cleanup_message_and_reboot \
+        cleanup_message_and_stop \
             "NO SE ENCONTRO INSTALACION PORTABLE" \
             "No hay archivos de instalacion en ${cleanup_dev}."
     fi
@@ -629,7 +667,7 @@ handle_install_cleanup_request() {
     if ! remove_portable_install_at /run/contest-cleanup-dst; then
         umount /run/contest-cleanup-dst 2>/dev/null || true
         rmdir /run/contest-cleanup-dst 2>/dev/null || true
-        cleanup_message_and_reboot \
+        cleanup_message_and_stop \
             "ERROR AL BORRAR INSTALACION" \
             "No se pudo eliminar ${CONTEST_DIR} en ${cleanup_dev}."
     fi
@@ -638,7 +676,7 @@ handle_install_cleanup_request() {
     umount /run/contest-cleanup-dst 2>/dev/null || true
     rmdir /run/contest-cleanup-dst 2>/dev/null || true
 
-    cleanup_message_and_reboot \
+    success_message_and_reboot \
         "BORRADO EXITOSO" \
         "Los archivos de instalacion fueron borrados con exito." \
         "El sistema se reiniciara cuando presiones una tecla."
@@ -661,12 +699,6 @@ auto_install_to_disk() {
         if find_existing_install; then
             return 0
         fi
-
-        _log "Verificando discos disponibles antes de instalar..."
-        if ! _scan_disks "${FOUND_DEV}"; then
-            _install_error "No hay ningun disco para instalar.\nVerifica la lista de discos mostrada arriba."
-        fi
-        _log "Disco encontrado. Iniciando instalacion..."
 
         INSTALL_ERROR=""
         if ! _find_install_target "${FOUND_DEV}"; then
@@ -696,7 +728,7 @@ auto_install_to_disk() {
     fi
 
     if [ "${CONTEST_REINSTALL}" != "1" ] && [ -f "/run/contest-install-dst${CONTEST_DIR}/.contest-installed" ]; then
-        _log "Instalacion previa detectada en ${INSTALL_DEV} — reutilizando."
+        _log "Instalacion previa detectada en ${INSTALL_DEV} - reutilizando."
         umount /run/contest-install-src 2>/dev/null || true
         umount /run/contest-install-dst 2>/dev/null || true
         FOUND_DEV="${INSTALL_DEV}"
@@ -725,7 +757,7 @@ auto_install_to_disk() {
             _install_error "No se pudo copiar '${f}' al disco.\nPosible causa: disco lleno o error de escritura en ${INSTALL_DEV}."
         fi
         mv "${dst}/${f}.tmp" "${dst}/${f}"
-        _log "  ${f} — OK"
+        _log "  ${f} - OK"
     done
 
     case "${INSTALL_FSTYPE}" in
@@ -736,7 +768,7 @@ auto_install_to_disk() {
             sqfs_kb=$(du -sk "${src}/${CONTEST_ROOT}" 2>/dev/null | awk '{print $1}')
             overlay_mb=$(( (sqfs_kb / 1024) + 4096 ))
             if command -v truncate >/dev/null 2>&1 && ext4_overlay_formatter_available; then
-                _log "${INSTALL_FSTYPE} no soporta overlayfs — creando overlay.img (${overlay_mb} MB)..."
+                _log "${INSTALL_FSTYPE} no soporta overlayfs - creando overlay.img (${overlay_mb} MB)..."
                 if ! truncate -s "${overlay_mb}M" "${overlay_img}"; then
                     umount /run/contest-install-src 2>/dev/null || true
                     umount /run/contest-install-dst 2>/dev/null || true
@@ -744,12 +776,12 @@ auto_install_to_disk() {
                 fi
                 if ! format_ext4_overlay_image "${overlay_img}"; then
                     rm -f "${overlay_img}"
-                    _warn "No se pudo formatear overlay.img en initramfs — se arrancara en modo temporal y se aprovisionara despues del boot"
+                    _warn "No se pudo formatear overlay.img en initramfs - se arrancara en modo temporal y se aprovisionara despues del boot"
                 else
-                    _log "overlay.img — OK"
+                    _log "overlay.img - OK"
                 fi
             else
-                _warn "mke2fs/mkfs.ext4 no disponible en initramfs — se arrancara en modo temporal y overlay.img se aprovisionara despues del boot"
+                _warn "mke2fs/mkfs.ext4 no disponible en initramfs - se arrancara en modo temporal y overlay.img se aprovisionara despues del boot"
             fi
             ;;
     esac
@@ -775,7 +807,7 @@ auto_install_to_disk() {
             _warn "  TAMANIO INCORRECTO: ${f} (origen=${src_size}B destino=${dst_size}B)"
             verify_ok=0
         else
-            _log "  ${f} — tamanio OK ($(( src_size / 1024 / 1024 )) MB)"
+            _log "  ${f} - tamanio OK ($(( src_size / 1024 / 1024 )) MB)"
         fi
     done
 
@@ -785,9 +817,9 @@ auto_install_to_disk() {
         mkdir -p /run/contest-verify-sqfs
         if mount -o ro,loop "${dst}/${CONTEST_ROOT}" /run/contest-verify-sqfs 2>/dev/null; then
             umount /run/contest-verify-sqfs 2>/dev/null || true
-            _log "  squashfs montable — OK"
+            _log "  squashfs montable - OK"
         else
-            _warn "  squashfs NO se puede montar — archivo posiblemente corrupto"
+            _warn "  squashfs NO se puede montar - archivo posiblemente corrupto"
             verify_ok=0
         fi
         rmdir /run/contest-verify-sqfs 2>/dev/null || true
@@ -798,10 +830,10 @@ auto_install_to_disk() {
         umount /run/contest-install-src 2>/dev/null || true
         umount /run/contest-install-dst 2>/dev/null || true
         rmdir /run/contest-install-src /run/contest-install-dst 2>/dev/null || true
-        _install_error "Verificacion de archivos FALLO — los archivos copiados estan incompletos o corruptos.\nPosible causa: disco lleno a mitad de copia o error de hardware en ${INSTALL_DEV}."
+        _install_error "Verificacion de archivos FALLO - los archivos copiados estan incompletos o corruptos.\nPosible causa: disco lleno a mitad de copia o error de hardware en ${INSTALL_DEV}."
     fi
 
-    _log "Verificacion completa — todos los archivos correctos."
+    _log "Verificacion completa - todos los archivos correctos."
     # ─────────────────────────────────────────────────────────────────────────
 
     printf 'INSTALLED_FROM=initramfs\nINSTALL_DEV=%s\nINSTALL_FSTYPE=%s\n' \
@@ -812,8 +844,10 @@ auto_install_to_disk() {
     umount /run/contest-install-dst 2>/dev/null || true
     rmdir /run/contest-install-src /run/contest-install-dst 2>/dev/null || true
 
-    _log "Instalacion completa en ${INSTALL_DEV}. Reiniciando para entrar con persistencia."
-    install_complete_message_and_reboot "${INSTALL_DEV}"
+    _log "Instalacion completa en ${INSTALL_DEV}. Iniciando directamente sin reiniciar..."
+    FOUND_DEV="${INSTALL_DEV}"
+    FOUND_FSTYPE="${INSTALL_FSTYPE}"
+    CONTEST_PERSIST="auto"
     return 0
 }
 
@@ -861,8 +895,8 @@ select_overlay_mode() {
         off|false|no|0)
             [ "${MEDIA_RW}" = "1" ] && mount -o remount,ro /run/contest-media 2>/dev/null || true
             case "${CONTEST_INSTALL_MODE}" in
-                full) _log "Modo instalacion completa — tmpfs temporal para arranque (full-install.sh instalara al disco)" ;;
-                *)    _log "Sin persistencia — sesion temporal en tmpfs" ;;
+                full) _log "Modo instalacion completa - tmpfs temporal para arranque (full-install.sh instalara al disco)" ;;
+                *)    _log "Sin persistencia - sesion temporal en tmpfs" ;;
             esac
             _use_tmpfs_overlay
             return 0
@@ -910,7 +944,7 @@ select_overlay_mode() {
     fi
 
     [ "${MEDIA_RW}" = "1" ] && mount -o remount,ro /run/contest-media 2>/dev/null || true
-    _log "Sin soporte de persistencia — usando tmpfs"
+    _log "Sin soporte de persistencia - usando tmpfs"
     _use_tmpfs_overlay
 }
 
@@ -943,7 +977,6 @@ mount_root_image() {
 }
 
 mountroot() {
-    show_boot_banner
     parse_contest_cmdline
     check_min_ram
 

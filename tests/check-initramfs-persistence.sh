@@ -124,6 +124,17 @@ assert_exists "/dev/null" "sanity placeholder"
 [[ "${CONTEST_TEST_REBOOT_DELAY:-}" = "5" ]] || fail "Expected install_complete_message_and_reboot to use a 5 second reboot delay"
 unset CONTEST_TEST_NO_REBOOT
 
+unset CONTEST_TEST_STOP_REASON
+CONTEST_TEST_NO_REBOOT="1"
+stop_for_debug "fatal-test"
+[[ "${CONTEST_TEST_STOP_REASON:-}" = "fatal-test" ]] || fail "Expected fatal boot errors to stop for debugging"
+unset CONTEST_TEST_STOP_REASON
+
+cleanup_message_and_stop "ERROR DE PRUEBA" "detalle"
+[[ "${CONTEST_TEST_STOP_REASON:-}" = "ERROR DE PRUEBA" ]] || fail "Expected displayed boot errors to stop without rebooting"
+unset CONTEST_TEST_STOP_REASON
+unset CONTEST_TEST_NO_REBOOT
+
 keybin="${tmp_dir}/keybin"
 mkdir -p "${keybin}"
 cat > "${keybin}/stty" <<'EOF_STTY'
@@ -154,5 +165,26 @@ FOUND_FSTYPE="iso9660"
 CONTEST_INSTALL_MODE="live"
 CONTEST_REINSTALL="0"
 auto_install_to_disk
+
+_scan_install_partitions() {
+    local records="$2"
+    cat > "${records}" <<'EOF_PARTITIONS'
+/dev/sda1|ntfs3|524288000|419430400|BLOQUEADA/SOLO LECTURA
+/dev/sda2|ext4|104857600|52428800|APTA
+/dev/sdb1|xfs|209715200|83886080|APTA
+/dev/sdc1|ext4|8388608|4194304|SIN ESPACIO
+EOF_PARTITIONS
+}
+
+partition_summary="${tmp_dir}/partition-summary"
+CONTEST_INSTALL_RECORDS="${tmp_dir}/partition-records"
+INSTALL_ERROR=""
+_find_install_target /dev/iso 2>"${partition_summary}" || fail "Expected an eligible install target"
+[[ "${INSTALL_DEV}" = "/dev/sdb1" ]] || fail "Expected the partition with the most free space, got ${INSTALL_DEV}"
+[[ "${INSTALL_FSTYPE}" = "xfs" ]] || fail "Expected selected filesystem xfs, got ${INSTALL_FSTYPE}"
+grep -q '/dev/sda1.*BLOQUEADA/SOLO LECTURA' "${partition_summary}" || fail "Expected locked partition in summary"
+grep -q '/dev/sda2.*APTA' "${partition_summary}" || fail "Expected first eligible partition in summary"
+grep -q '/dev/sdb1.*APTA' "${partition_summary}" || fail "Expected selected partition in summary"
+grep -q '/dev/sdc1.*SIN ESPACIO' "${partition_summary}" || fail "Expected undersized partition in summary"
 
 echo "PASS: initramfs persistence actions keep only home, clear home, and wipe persistence as expected."
