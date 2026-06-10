@@ -29,6 +29,57 @@ _warn() {
     echo "W: $*" >&2
 }
 
+render_copy_progress() {
+    local label="$1"
+    local copied_bytes="$2"
+    local total_bytes="$3"
+    local width=30
+    local percent filled empty filled_bar empty_bar
+
+    if [ "${total_bytes}" -gt 0 ]; then
+        [ "${copied_bytes}" -le "${total_bytes}" ] || copied_bytes="${total_bytes}"
+        percent=$((copied_bytes * 100 / total_bytes))
+    else
+        percent=100
+    fi
+
+    filled=$((percent * width / 100))
+    empty=$((width - filled))
+    filled_bar="$(printf '%*s' "${filled}" '' | tr ' ' '#')"
+    empty_bar="$(printf '%*s' "${empty}" '')"
+
+    printf '\r  [%s%s] %3d%% %s' \
+        "${filled_bar}" "${empty_bar}" "${percent}" "${label}" >&2
+}
+
+copy_file_with_progress() {
+    local source="$1"
+    local destination="$2"
+    local label="${3:-${source##*/}}"
+    local total_bytes copied_bytes copy_pid
+    local interval="${COPY_PROGRESS_INTERVAL:-1}"
+
+    total_bytes="$(stat -c '%s' "${source}" 2>/dev/null)" || return 1
+    rm -f "${destination}"
+
+    cp "${source}" "${destination}" &
+    copy_pid=$!
+
+    while kill -0 "${copy_pid}" 2>/dev/null; do
+        copied_bytes="$(stat -c '%s' "${destination}" 2>/dev/null || echo 0)"
+        render_copy_progress "${label}" "${copied_bytes}" "${total_bytes}"
+        sleep "${interval}"
+    done
+
+    if ! wait "${copy_pid}"; then
+        echo >&2
+        return 1
+    fi
+
+    render_copy_progress "${label}" "${total_bytes}" "${total_bytes}"
+    echo >&2
+}
+
 parse_contest_cmdline() {
     CONTEST_DIR="/contest"
     CONTEST_ROOT="filesystem.squashfs"
@@ -750,7 +801,7 @@ auto_install_to_disk() {
         local size_mb
         size_mb=$(( $(stat -c '%s' "${src}/${f}" 2>/dev/null || echo 0) / 1024 / 1024 ))
         _log "  copiando ${f} (${size_mb} MB)..."
-        if ! cp "${src}/${f}" "${dst}/${f}.tmp"; then
+        if ! copy_file_with_progress "${src}/${f}" "${dst}/${f}.tmp" "${f}"; then
             rm -f "${dst}/${f}.tmp"
             umount /run/contest-install-src 2>/dev/null || true
             umount /run/contest-install-dst 2>/dev/null || true

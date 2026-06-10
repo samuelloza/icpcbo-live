@@ -30,6 +30,19 @@ assert_not_exists() {
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
+copy_source="${tmp_dir}/filesystem.squashfs"
+copy_destination="${tmp_dir}/filesystem.squashfs.tmp"
+copy_progress_log="${tmp_dir}/copy-progress.log"
+dd if=/dev/zero of="${copy_source}" bs=1M count=2 status=none
+COPY_PROGRESS_INTERVAL=0.01 \
+    copy_file_with_progress \
+        "${copy_source}" \
+        "${copy_destination}" \
+        "filesystem.squashfs" 2>"${copy_progress_log}"
+cmp "${copy_source}" "${copy_destination}" || fail "Expected progress copy to preserve filesystem contents"
+grep -q '\[##############################\] 100% filesystem.squashfs' "${copy_progress_log}" || \
+    fail "Expected filesystem copy to finish with a visible 100% progress bar"
+
 data_dir="${tmp_dir}/persistent-data"
 meta_dir="${tmp_dir}/persistent-meta"
 mkdir -p "${data_dir}/home/icpc" "${data_dir}/etc" "${meta_dir}/cache"

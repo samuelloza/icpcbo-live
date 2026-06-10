@@ -20,6 +20,7 @@ set -euo pipefail
 
 . /usr/lib/contest/lib/base.sh
 . /usr/lib/contest/lib/fs.sh
+. /usr/lib/contest/lib/progress.sh
 . /usr/lib/contest/lib/runtime-layout.sh
 
 [ -r /etc/contestiso/update.env ] && . /etc/contestiso/update.env
@@ -88,34 +89,115 @@ _log "Portable mode: files will be copied inside ${CONTEST_DIR} on the existing 
 DEPLOY_TARGET="$(cmdline_param contest.deploy_target)"
 TARGET_DEV="${DEPLOY_TARGET:-${1:-}}"
 
-# Probe a partition: must be mountable and have enough free space.
-# Returns the filesystem type on stdout. Skips swap and ISO device.
-probe_partition() {
+# Never deploy to USB storage, including USB disks whose partitions are
+# reported as non-removable. Check the complete block-device ancestry because
+# TRAN is commonly set on the parent disk rather than on the partition.
+is_usb_storage() {
     local dev="$1"
-    local fstype
-    fstype="$(lsblk -n -o FSTYPE "${dev}" 2>/dev/null | head -1)"
+    local sysfs_path
 
-    case "${fstype}" in
-        ext4|ext3|xfs|ntfs|ntfs3|vfat|exfat) ;;
-        *) return 1 ;;
+    if lsblk -s -n -o TRAN "${dev}" 2>/dev/null | grep -Fqx usb; then
+        return 0
+    fi
+
+    if command -v udevadm >/dev/null 2>&1 &&
+       udevadm info --query=property --name="${dev}" 2>/dev/null |
+           grep -Fqx 'ID_BUS=usb'; then
+        return 0
+    fi
+
+    sysfs_path="$(readlink -f "/sys/class/block/${dev##*/}" 2>/dev/null || true)"
+    case "${sysfs_path}" in
+        */usb[0-9]*/*) return 0 ;;
     esac
 
-    local mnt_opt
-    mnt_opt="$(mount_opts_for_fstype "${fstype}" ro)"
+    return 1
+}
 
+# Evaluate a partition and populate EVAL_* fields for probing and summaries.
+evaluate_partition() {
+    local dev="$1"
+    local mnt_opt stats
+
+    EVAL_FSTYPE="$(lsblk -n -o FSTYPE "${dev}" 2>/dev/null | head -1)"
+    EVAL_SIZE="$(lsblk -n -o SIZE "${dev}" 2>/dev/null | head -1 | tr -d ' ')"
+    EVAL_USED="-"
+    EVAL_FREE="-"
+    EVAL_FREE_MB=0
+    EVAL_REASON=""
+
+    if is_usb_storage "${dev}"; then
+        EVAL_REASON="NO (USB/externo)"
+        return 1
+    fi
+
+    case "${EVAL_FSTYPE}" in
+        ext4|ext3|xfs|ntfs|ntfs3|vfat|exfat) ;;
+        *)
+            EVAL_REASON="NO (formato no compatible)"
+            return 1
+            ;;
+    esac
+
+    mnt_opt="$(mount_opts_for_fstype "${EVAL_FSTYPE}" ro)"
     mkdir -p "${MOUNT_TMP}"
-    mount -t "${fstype}" -o "${mnt_opt}" "${dev}" "${MOUNT_TMP}" 2>/dev/null || return 1
+    if ! mount -t "${EVAL_FSTYPE}" -o "${mnt_opt}" "${dev}" "${MOUNT_TMP}" 2>/dev/null; then
+        EVAL_REASON="NO (bloqueado/no montable)"
+        return 1
+    fi
 
-    local free_mb
-    free_mb=$(df -m "${MOUNT_TMP}" --output=avail 2>/dev/null | tail -1 | tr -d ' ')
-    umount "${MOUNT_TMP}"
+    stats="$(df -h "${MOUNT_TMP}" --output=used,avail 2>/dev/null | tail -1)"
+    EVAL_USED="$(awk '{print $1}' <<< "${stats}")"
+    EVAL_FREE="$(awk '{print $2}' <<< "${stats}")"
+    EVAL_FREE_MB="$(df -m "${MOUNT_TMP}" --output=avail 2>/dev/null | tail -1 | tr -d ' ')"
+    if ! umount "${MOUNT_TMP}"; then
+        EVAL_REASON="NO (no se pudo desmontar)"
+        return 1
+    fi
 
-    [ "${free_mb:-0}" -ge "${MIN_FREE_MB}" ] || return 1
-    echo "${fstype}"
+    if [ "${EVAL_FREE_MB:-0}" -lt "${MIN_FREE_MB}" ]; then
+        EVAL_REASON="NO (sin espacio)"
+        return 1
+    fi
+
+    # A read-only probe is insufficient for NTFS volumes affected by Windows
+    # hibernation/Fast Startup. Verify that the candidate can actually be
+    # mounted read-write before selecting it.
+    mnt_opt="$(mount_opts_for_fstype "${EVAL_FSTYPE}" rw)"
+    if ! mount -t "${EVAL_FSTYPE}" -o "${mnt_opt}" "${dev}" "${MOUNT_TMP}" 2>/dev/null; then
+        EVAL_REASON="NO (bloqueado/solo lectura)"
+        return 1
+    fi
+    if ! umount "${MOUNT_TMP}"; then
+        EVAL_REASON="NO (no se pudo desmontar)"
+        return 1
+    fi
+
+    EVAL_REASON="SI"
+    return 0
+}
+
+# Probe a partition: must be readable, writable and have enough free space.
+# Returns the filesystem type on stdout.
+probe_partition() {
+    local dev="$1"
+
+    evaluate_partition "${dev}" || return 1
+    echo "${EVAL_FSTYPE}"
 }
 
 find_target_partition() {
-    _log "Scanning for a suitable partition (>= ${MIN_FREE_MB} MB free)..."
+    local selected=""
+    local selected_free_mb=0
+
+    # This function is consumed through command substitution, so diagnostics
+    # must stay off stdout; stdout is reserved for the selected device path.
+    _log "Scanning internal disks for a suitable partition (>= ${MIN_FREE_MB} MB free)..." >&2
+    printf '\n%-16s %-8s %-9s %-9s %-9s %s\n' \
+        "DISPOSITIVO" "FORMATO" "TAMAÑO" "USADO" "LIBRE" "ELEGIBLE" >&2
+    printf '%-16s %-8s %-9s %-9s %-9s %s\n' \
+        "----------------" "--------" "---------" "---------" "---------" "------------------------" >&2
+
     while IFS= read -r line; do
         local name mountpoint
         name=$(awk '{print $1}' <<< "${line}")
@@ -128,20 +210,32 @@ find_target_partition() {
         local blkdev="/dev/${name}"
         [ -b "${blkdev}" ] || continue
 
-        if probe_partition "${blkdev}" >/dev/null 2>&1; then
-            echo "${blkdev}"
-            return 0
+        if evaluate_partition "${blkdev}"; then
+            if [ "${EVAL_FREE_MB:-0}" -gt "${selected_free_mb}" ]; then
+                selected="${blkdev}"
+                selected_free_mb="${EVAL_FREE_MB}"
+            fi
         fi
+
+        printf '%-16s %-8s %-9s %-9s %-9s %s\n' \
+            "${blkdev}" "${EVAL_FSTYPE:--}" "${EVAL_SIZE:--}" \
+            "${EVAL_USED:--}" "${EVAL_FREE:--}" "${EVAL_REASON}" >&2
     done < <(lsblk -l -n -o NAME,FSTYPE,MOUNTPOINT 2>/dev/null)
-    return 1
+
+    printf '\n' >&2
+    [ -n "${selected}" ] || return 1
+    _log "Selected ${selected} with ${selected_free_mb} MB free." >&2
+    echo "${selected}"
 }
 
 if [ -z "${TARGET_DEV}" ]; then
     TARGET_DEV="$(find_target_partition)" || \
-        _die "No suitable partition found. Use 'contest.deploy_target=/dev/sdXN' on the kernel cmdline."
+        _die "No writable internal partition with enough free space was found. USB storage is not eligible."
 fi
 
 [ -b "${TARGET_DEV}" ] || _die "Not a block device: ${TARGET_DEV}"
+is_usb_storage "${TARGET_DEV}" && \
+    _die "Refusing USB storage target: ${TARGET_DEV}. Select an internal disk partition."
 
 TARGET_FSTYPE="$(probe_partition "${TARGET_DEV}")" || \
     _die "Cannot probe partition ${TARGET_DEV} (unsupported fs or not enough space)"
@@ -166,8 +260,28 @@ cleanup_mount
 # ----------------------------------------------------------------
 # Validate free space
 # ----------------------------------------------------------------
-mount_target rw || \
-    _die "Cannot write-mount ${TARGET_DEV}"
+if ! mount_target rw; then
+    if [ "${TARGET_FSTYPE}" = "ntfs" ] || [ "${TARGET_FSTYPE}" = "ntfs3" ]; then
+        echo "" >&2
+        echo "=========================================================================" >&2
+        echo " ¡ERROR: LA PARTICIÓN DE WINDOWS ESTÁ SECUESTRADA / BLOQUEADA!" >&2
+        echo "=========================================================================" >&2
+        echo " Se detectó que el Inicio Rápido de Windows o la hibernación están activos." >&2
+        echo " No se puede escribir en el disco en este estado para evitar pérdida de datos." >&2
+        echo "" >&2
+        echo " Por favor, realiza lo siguiente:" >&2
+        echo "   1. Reinicia la máquina e inicia Windows normalmente." >&2
+        echo "   2. Apaga Windows manteniendo presionada la tecla SHIFT (Mayús)." >&2
+        echo "      (O desactiva el 'Inicio Rápido' desde el Panel de Control)." >&2
+        echo "   3. Vuelve a iniciar con este medio USB." >&2
+        echo "=========================================================================" >&2
+        echo "" >&2
+        read -r -p "Presiona Enter para salir del instalador..." || true
+        exit 1
+    else
+        _die "Cannot write-mount ${TARGET_DEV}"
+    fi
+fi
 
 free_mb=$(df -m "${MOUNT_TMP}" --output=avail 2>/dev/null | tail -1 | tr -d ' ')
 sqfs_mb=$(du -sm "${SOURCE_DIR}/${CONTEST_ROOT}" 2>/dev/null | awk '{print $1}')
@@ -195,10 +309,15 @@ mkdir -p "${current_dir}" "${staging_dir}" "${state_dir}"
 
 for f in vmlinuz initrd.img "${CONTEST_ROOT}"; do
     _log "  → ${f}"
-    cp "${SOURCE_DIR}/${f}" "${current_dir}/${f}"
+    copy_file_with_progress "${SOURCE_DIR}/${f}" "${current_dir}/${f}" "${f}" || \
+        _die "Failed to copy ${f}"
 done
 if [ -f "${SOURCE_DIR}/grub-entry.cfg" ]; then
-    cp "${SOURCE_DIR}/grub-entry.cfg" "${current_dir}/grub-entry.cfg"
+    _log "  → grub-entry.cfg"
+    copy_file_with_progress \
+        "${SOURCE_DIR}/grub-entry.cfg" \
+        "${current_dir}/grub-entry.cfg" \
+        "grub-entry.cfg" || _die "Failed to copy grub-entry.cfg"
 fi
 write_runtime_version "${contest_root}" "${RUNTIME_VERSION_VALUE}"
 printf '%s\n' "${RUNTIME_VERSION_VALUE}" > "${current_dir}/VERSION"
