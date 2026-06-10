@@ -1,5 +1,0 @@
-[Desktop Entry]
-Name=ICPC Bolivia
-Exec=xdg-open file:///usr/share/doc/icpcbo/index.html
-Type=Application
-Icon=firefox

@@ -42,7 +42,7 @@ grub_hdd_ref='${hdd_root}'
 
 expected_runtime_grub="$(cat <<EOF_RUNTIME
 menuentry "${ISO_NAME} (folder mode)" {
-    linux /${CONTEST_DIR}/vmlinuz quiet splash contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=auto console=tty0 console=ttyS0,115200n8 contest.boot_source=hdd contest_min_ram_mb=${MIN_RAM_MB} contest.persist_scope=home
+    linux /${CONTEST_DIR}/vmlinuz quiet splash contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=auto console=tty0 console=ttyS0,115200n8 contest.boot_source=hdd contest.persist_scope=home
     initrd /${CONTEST_DIR}/initrd.img
 }
 EOF_RUNTIME
@@ -82,24 +82,24 @@ elif [ -n "\${hdd_root}" ]; then
 # ── Arranque persistente desde disco ──────────────────────────────────────
     menuentry "Iniciar ICPC BO (persistencia del home)" {
         set root=(${grub_hdd_ref})
-        linux /${CONTEST_DIR}/vmlinuz quiet splash contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=on console=tty0 console=ttyS0,115200n8 contest.boot_source=hdd contest_min_ram_mb=${MIN_RAM_MB} contest.persist_scope=home
+        linux /${CONTEST_DIR}/vmlinuz quiet splash contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=on console=tty0 console=ttyS0,115200n8 contest.boot_source=hdd contest.persist_scope=home
         initrd /${CONTEST_DIR}/initrd.img
     }
 
     menuentry "Limpiar home" {
         set root=(${grub_hdd_ref})
-        linux /${CONTEST_DIR}/vmlinuz contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=on console=tty0 console=ttyS0,115200n8 contest.boot_source=hdd contest_min_ram_mb=${MIN_RAM_MB} contest.persist_scope=home contest.reset_home=1
+        linux /${CONTEST_DIR}/vmlinuz contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=on console=tty0 console=ttyS0,115200n8 contest.boot_source=hdd contest.persist_scope=home contest.reset_home=1
         initrd /${CONTEST_DIR}/initrd.img
     }
 
     menuentry "Borrar archivos de instalacion" {
         set root=(${grub_hdd_ref})
-        linux /${CONTEST_DIR}/vmlinuz contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=on console=tty0 console=ttyS0,115200n8 contest.boot_source=hdd contest_min_ram_mb=${MIN_RAM_MB} contest.clean_install=1
+        linux /${CONTEST_DIR}/vmlinuz contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=on console=tty0 console=ttyS0,115200n8 contest.boot_source=hdd contest.clean_install=1
         initrd /${CONTEST_DIR}/initrd.img
     }
 
     menuentry "Probar live (sin persistencia)" {
-        linux /${CONTEST_DIR}/vmlinuz contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=off console=tty0 console=ttyS0,115200n8 contest.boot_source=iso contest_min_ram_mb=${MIN_RAM_MB} contest.install_mode=live
+        linux /${CONTEST_DIR}/vmlinuz contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=off console=tty0 console=ttyS0,115200n8 contest.boot_source=iso contest.install_mode=live
         initrd /${CONTEST_DIR}/initrd.img
     }
 
@@ -107,22 +107,22 @@ else
 
 # ── Instalacion ───────────────────────────────────────────────────────────
     menuentry "Iniciar ICPC BO (persistencia del home)" {
-        linux /${CONTEST_DIR}/vmlinuz quiet splash contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=on console=tty0 console=ttyS0,115200n8 contest.boot_source=iso contest_min_ram_mb=${MIN_RAM_MB} contest.persist_scope=home
+        linux /${CONTEST_DIR}/vmlinuz quiet splash contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=on console=tty0 console=ttyS0,115200n8 contest.boot_source=iso contest.persist_scope=home
         initrd /${CONTEST_DIR}/initrd.img
     }
 
     menuentry "Limpiar home" {
-        linux /${CONTEST_DIR}/vmlinuz contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=on console=tty0 console=ttyS0,115200n8 contest.boot_source=iso contest_min_ram_mb=${MIN_RAM_MB} contest.persist_scope=home contest.reset_home=1
+        linux /${CONTEST_DIR}/vmlinuz contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=on console=tty0 console=ttyS0,115200n8 contest.boot_source=iso contest.persist_scope=home contest.reset_home=1
         initrd /${CONTEST_DIR}/initrd.img
     }
 
     menuentry "Borrar archivos de instalacion" {
-        linux /${CONTEST_DIR}/vmlinuz contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=on console=tty0 console=ttyS0,115200n8 contest.boot_source=iso contest_min_ram_mb=${MIN_RAM_MB} contest.clean_install=1
+        linux /${CONTEST_DIR}/vmlinuz contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=on console=tty0 console=ttyS0,115200n8 contest.boot_source=iso contest.clean_install=1
         initrd /${CONTEST_DIR}/initrd.img
     }
 
     menuentry "Probar live (sin persistencia)" {
-        linux /${CONTEST_DIR}/vmlinuz contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=off console=tty0 console=ttyS0,115200n8 contest.boot_source=iso contest_min_ram_mb=${MIN_RAM_MB} contest.install_mode=live
+        linux /${CONTEST_DIR}/vmlinuz contest_dir=/${CONTEST_DIR} contest_root=${ROOT_SQUASH_NAME} contest_persist=off console=tty0 console=ttyS0,115200n8 contest.boot_source=iso contest.install_mode=live
         initrd /${CONTEST_DIR}/initrd.img
     }
 

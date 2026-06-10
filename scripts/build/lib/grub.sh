@@ -31,7 +31,9 @@ grub_linux_line() {
         "${ROOT_SQUASH_NAME}" \
         "${persist_mode}"
     printf ' contest.boot_source=%s' "${boot_source}"
-    printf ' contest_min_ram_mb=%s' "${MIN_RAM_MB}"
+    if [[ -n "${MIN_RAM_MB}" ]]; then
+        printf ' contest_min_ram_mb=%s' "${MIN_RAM_MB}"
+    fi
 
     local arg
     for arg in "${extra_args[@]}"; do

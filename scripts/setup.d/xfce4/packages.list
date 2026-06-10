@@ -2,18 +2,24 @@ systemd-sysv
 sudo
 locales
 
-# --- Core GNOME shell (minimal) ---
-gnome-shell
-gnome-session
-gnome-settings-daemon
-gnome-control-center
-gdm3
-nautilus
-gnome-terminal
+# XFCE
+xfce4-session
+xfce4-panel
+xfdesktop4
+xfwm4
+xfconf
+thunar
+xfce4-terminal
+xfce4-power-manager
+xserver-xorg
+gvfs
+lightdm
+lightdm-gtk-greeter
+network-manager-gnome
 zenity
+librsvg2-common
 evince
 file-roller
-gnome-themes-extra
 dbus-user-session
 libglib2.0-bin
 libgtk-3-bin
@@ -22,7 +28,7 @@ libxrender1
 libxtst6
 libfontconfig1
 
-# Wi-Fi and networking
+# Red
 network-manager
 wpasupplicant
 wireless-regdb
@@ -38,30 +44,30 @@ firmware-brcm80211
 firmware-mediatek
 firmware-misc-nonfree
 
-# Boot/runtime
+# Arranque
 linux-image-amd64
 initramfs-tools
 
-# Needed by current build flow (VSCode download/install)
+# Build
 ca-certificates
 curl
 python3
 
-# Keyboard configuration
+# Teclado
 console-setup
 
-# Lab deployment tools (deploy-to-disk + GRUB install from live system)
+# Instalacion
 efibootmgr
 grub-efi-amd64
 grub-pc-bin
 
-# Full-install tools (unsquashfs + partitioning)
+# Instalacion completa
 squashfs-tools
 parted
 dosfstools
 e2fsprogs
 
-# --- System utilities ---
+# Utilidades
 net-tools
 openssh-server
 ansible
@@ -72,29 +78,25 @@ zabbix-agent2
 wget
 axel
 
-# --- Build tools ---
+# Compilacion
 build-essential
 autoconf
 autotools-dev
 python-is-python3
 
-# --- Development tools and IDEs ---
+# Desarrollo
 firefox-esr
 git
 ddd
 gdb
 valgrind
-konsole
 byobu
 geany
 geany-plugin-automark
 geany-plugin-lineoperations
 geany-plugin-overview
 emacs
-gedit
 joe
-kate
-kdevelop
 nano
 vim
 vim-gtk3
@@ -111,7 +113,7 @@ htop
 manpages-dev
 libwxgtk3.2-1
 
-# --- Documentation and utilities ---
+# Documentacion
 python3-doc
 at
 fonts-recommended

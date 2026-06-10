@@ -1,0 +1,73 @@
+# Paquetes a purgar al final del build.
+
+# Telemetria / cloud
+popularity-contest
+cloud-init
+snapd
+gnome-software-plugin-snap
+
+# Multimedia
+rhythmbox
+totem
+totem-plugins
+totem-common
+
+# Imagen / camara
+cheese
+cheese-common
+shotwell
+eog
+gimp
+gimp-data
+gimp-help-common
+
+# Apps no usadas
+gnome-calendar
+gnome-contacts
+gnome-clocks
+gnome-maps
+gnome-weather
+gnome-photos
+gnome-music
+gnome-video-effects
+baobab
+gnome-characters
+gnome-font-viewer
+gnome-color-manager
+yelp
+yelp-xsl
+
+# Juegos
+gnome-games
+gnome-sudoku
+gnome-mines
+gnome-chess
+gnome-mahjongg
+gnome-robots
+gnome-taquin
+gnome-tetravex
+five-or-more
+four-in-a-row
+quadrapassel
+iagno
+lightsoff
+swell-foop
+hitori
+tali
+gnome-2048
+gnome-nibbles
+
+# Correo / oficina
+thunderbird
+evolution
+evolution-data-server
+
+# Discos
+gparted
+gnome-disk-utility
+
+exim4
+exim4-base
+exim4-config
+exim4-daemon-light
+exim4-daemon-heavy

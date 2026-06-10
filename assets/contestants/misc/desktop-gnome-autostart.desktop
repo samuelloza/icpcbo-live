@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=ICPC Bolivia Start
-Comment=ICPC Bolivia setup
+Name=Inicio
+Comment=Inicio
 Exec=/opt/icpc/bin/gnome-autostart.sh
 OnlyShowIn=GNOME;Unity;
 X-GNOME-Autostart-Phase=Application

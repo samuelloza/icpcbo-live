@@ -36,53 +36,11 @@ resolve_output_dir() {
 
 latest_iso_path() {
     local output_dir="${1:?missing output dir}"
-    find "${output_dir}" -maxdepth 1 -type f -name '*.iso' ! -name '*-grub-preview.iso' -printf '%T@ %p\n' 2>/dev/null \
+    find "${output_dir}" -maxdepth 1 -type f -name '*.iso' -printf '%T@ %p\n' 2>/dev/null \
         | sort -nr \
         | head -n1 \
         | cut -d' ' -f2- \
         || true
-}
-
-preview_iso_path() {
-    local output_dir="${1:?missing output dir}"
-    printf '%s/%s-grub-preview.iso\n' "${output_dir}" "${ISO_NAME}"
-}
-
-print_grub_preview_hint() {
-    local output_dir="$1"
-    local preview_dir="${output_dir}/grub-preview"
-    local iso_grub="${preview_dir}/boot/grub/grub.cfg"
-    local runtime_grub="${preview_dir}/${CONTEST_DIR}/grub-entry.cfg"
-    local preview_iso
-
-    preview_iso="$(latest_iso_path "${output_dir}")"
-
-    [[ -f "${iso_grub}" ]] && echo "GRUB preview: ${iso_grub}" >&2
-    [[ -f "${runtime_grub}" ]] && echo "GRUB runtime: ${runtime_grub}" >&2
-    [[ -n "${preview_iso}" && -f "${preview_iso}" ]] && echo "ISO preview:  ${preview_iso}" >&2
-}
-
-show_grub_preview() {
-    local output_dir="$1"
-    local preview_dir="${output_dir}/grub-preview"
-    local iso_grub="${preview_dir}/boot/grub/grub.cfg"
-    local runtime_grub="${preview_dir}/${CONTEST_DIR}/grub-entry.cfg"
-
-    [[ -f "${iso_grub}" || -f "${runtime_grub}" ]] || {
-        echo "No hay preview de GRUB en ${preview_dir}" >&2
-        return 1
-    }
-
-    if [[ -f "${iso_grub}" ]]; then
-        echo "===== ${iso_grub} ====="
-        cat "${iso_grub}"
-        echo
-    fi
-
-    if [[ -f "${runtime_grub}" ]]; then
-        echo "===== ${runtime_grub} ====="
-        cat "${runtime_grub}"
-    fi
 }
 
 OUTPUT_DIR_RESOLVED="$(resolve_output_dir)"
@@ -238,8 +196,10 @@ start_apt_cacher() {
 
 build_target() {
     local target="${1:?missing build target}"
+    local desktop_profile="${2:-${DESKTOP_PROFILE}}"
+
     start_apt_cacher
-    bash "${BUILD_SCRIPT}" "${target}"
+    DESKTOP_PROFILE="${desktop_profile}" bash "${BUILD_SCRIPT}" "${target}"
 }
 
 show_built_iso() {
@@ -259,16 +219,14 @@ show_built_iso() {
 
 start_usage() {
     cat <<EOF
-Uso: $(basename "$0") [menu|run|build|build-run|create-disk|grub-preview|build-preview|help]
+Uso: $(basename "$0") [menu|run|build-gnome|build-xfce|create-disk|help]
 
 Acciones:
   menu            abre el menú interactivo
   run             inicia el entorno de prueba con el ISO más nuevo
-  build           construye el ISO y muestra la ruta
-  build-run       construye el ISO e inicia el entorno de prueba
+  build-gnome     construye el ISO con GNOME y muestra la ruta
+  build-xfce      construye el ISO con XFCE y muestra la ruta
   create-disk     crea el disco NTFS lab (se usa para probar una imagen de windows xp)
-  grub-preview    muestra los archivos GRUB preview
-  build-preview   genera preview de GRUB y lo levanta
   help            muestra esta ayuda
 EOF
 }
@@ -284,28 +242,18 @@ run_start_action() {
             require_iso "${selected_iso}"
             launch_winxp 1 "${selected_iso}"
             ;;
-        build)
-            build_target full
+        build-gnome)
+            build_target full gnome
             selected_iso="$(latest_iso_path "${OUTPUT_DIR_RESOLVED}")"
             show_built_iso "${selected_iso}"
             ;;
-        build-run)
-            build_target full
+        build-xfce)
+            build_target full xfce4
             selected_iso="$(latest_iso_path "${OUTPUT_DIR_RESOLVED}")"
-            require_iso "${selected_iso}"
-            launch_winxp 1 "${selected_iso}"
-            ;;
-        build-preview)
-            build_target grub-preview
-            selected_iso="$(preview_iso_path "${OUTPUT_DIR_RESOLVED}")"
-            require_iso "${selected_iso}"
-            launch_vm "${selected_iso}" 0
+            show_built_iso "${selected_iso}"
             ;;
         create-disk)
             create_lab_disk "${LAB_DISK_PATH}" 15
-            ;;
-        grub-preview)
-            show_grub_preview "${OUTPUT_DIR_RESOLVED}"
             ;;
         menu)
             start_interactive_menu
@@ -329,12 +277,9 @@ start_interactive_menu() {
  Start Menu
 ========================================
 1) Iniciar entorno de prueba
-2) Generar ISO
-3) Generar ISO e iniciar
+2) Generar ISO GNOME
+3) Generar ISO XFCE
 4) Crear disco NTFS lab
-5) Ver archivos GRUB preview
-6) Generar preview de GRUB y levantarlo
- g) Ver archivos GRUB preview
 0) Salir
 EOF
 
@@ -343,21 +288,10 @@ EOF
 
         case "${option}" in
             1) run_start_action run; return 0 ;;
-            2) run_start_action build; return 0 ;;
-            3) run_start_action build-run; return 0 ;;
+            2) run_start_action build-gnome; return 0 ;;
+            3) run_start_action build-xfce; return 0 ;;
             4)
                 run_start_action create-disk
-                echo
-                read -r -p "Presiona Enter para volver al menú..." _
-                ;;
-            5)
-                run_start_action grub-preview
-                echo
-                read -r -p "Presiona Enter para volver al menú..." _
-                ;;
-            6) run_start_action build-preview; return 0 ;;
-            g)
-                run_start_action grub-preview
                 echo
                 read -r -p "Presiona Enter para volver al menú..." _
                 ;;

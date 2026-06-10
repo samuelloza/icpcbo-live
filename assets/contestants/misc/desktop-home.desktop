@@ -1,0 +1,5 @@
+[Desktop Entry]
+Name=Inicio
+Exec=xdg-open file:///usr/share/doc/contest/index.html
+Type=Application
+Icon=firefox

@@ -105,3 +105,25 @@ Construir y levantar la VM de prueba:
 ```bash
 sudo ./start.sh build-run
 ```
+
+## Escritorio
+
+Por defecto se construye GNOME:
+
+```bash
+sudo ./start.sh build
+```
+
+Para XFCE:
+
+```bash
+DESKTOP_PROFILE=xfce4 sudo -E ./start.sh build
+```
+
+Los hooks y paquetes están separados así:
+
+```text
+scripts/setup.d/common/
+scripts/setup.d/gnome/
+scripts/setup.d/xfce4/
+```

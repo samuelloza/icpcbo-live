@@ -16,5 +16,5 @@ if [ "${DOSETUP}" != "1" ]; then
 fi
 
 if [ ! -s "${STATE_FILE}" ]; then
-    /opt/icpc/bin/contestants-login-gnome.sh || true
+    /opt/icpc/bin/contestants-login-xfce.sh || true
 fi

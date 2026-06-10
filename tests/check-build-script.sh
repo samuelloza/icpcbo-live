@@ -47,11 +47,32 @@ mkdir -p "${ROOTFS_DIR}/tmp"
 
 copy_setup_hooks
 assert_file "${ROOTFS_DIR}/tmp/setup.d/01-base-cleanup.sh"
+assert_file "${ROOTFS_DIR}/tmp/setup.d/03-default-user.sh"
+assert_file "${ROOTFS_DIR}/tmp/setup.d/05-desktop-defaults.sh"
 assert_file "${ROOTFS_DIR}/tmp/setup.d/09-full-install-bootstrap-config.sh"
+assert_file "${ROOTFS_DIR}/tmp/setup.d/12-gnome-extensions.sh"
+assert_file "${ROOTFS_DIR}/tmp/setup.d/14-gnome-defaults.sh"
+assert_file "${ROOTFS_DIR}/tmp/setup.d/15-user-env.sh"
 assert_file "${ROOTFS_DIR}/tmp/setup.d/12-install-vscode.sh"
 assert_file "${ROOTFS_DIR}/tmp/setup.d/89-prune-locales.sh"
 assert_file "${ROOTFS_DIR}/tmp/setup.d/80-apt-policy.sh"
 assert_file "${ROOTFS_DIR}/tmp/setup.d/90-initramfs.sh"
+assert_equals "${PROJECT_DIR}/scripts/setup.d/gnome/packages.list" "$(desktop_packages_list)" "paquetes gnome"
+
+DESKTOP_PROFILE=xfce4
+ROOTFS_DIR="${tmp_dir}/rootfs-xfce"
+mkdir -p "${ROOTFS_DIR}/tmp"
+copy_setup_hooks
+assert_file "${ROOTFS_DIR}/tmp/setup.d/01-base-cleanup.sh"
+assert_file "${ROOTFS_DIR}/tmp/setup.d/03-default-user.sh"
+assert_file "${ROOTFS_DIR}/tmp/setup.d/05-desktop-defaults.sh"
+assert_file "${ROOTFS_DIR}/tmp/setup.d/15-user-env.sh"
+assert_file "${ROOTFS_DIR}/tmp/setup.d/12-install-vscode.sh"
+assert_not_file "${ROOTFS_DIR}/tmp/setup.d/12-gnome-extensions.sh"
+assert_not_file "${ROOTFS_DIR}/tmp/setup.d/14-gnome-defaults.sh"
+assert_equals "${PROJECT_DIR}/scripts/setup.d/xfce4/packages.list" "$(desktop_packages_list)" "paquetes xfce"
+DESKTOP_PROFILE=gnome
+ROOTFS_DIR="${tmp_dir}/rootfs"
 
 copy_chroot_scripts
 assert_file "${ROOTFS_DIR}/tmp/run-hook-dir.sh"
@@ -63,12 +84,38 @@ assert_executable "${ROOTFS_DIR}/tmp/cached-curl.sh"
 assert_executable "${ROOTFS_DIR}/tmp/install-and-customize-chroot.sh"
 assert_executable "${ROOTFS_DIR}/tmp/trim-chroot.sh"
 
+cache_test_url="https://example.test/downloads/tool.tar.gz"
+cache_test_hash="$(printf '%s' "${cache_test_url}" | sha256sum | cut -c1-16)"
+cache_test_name="$(basename "${cache_test_url%%\?*}" | tr -cs 'a-zA-Z0-9._-' '_' | cut -c1-80)"
+cache_test_dir="${tmp_dir}/download-cache"
+cache_test_output="${tmp_dir}/tool.tar.gz"
+cache_test_log="${tmp_dir}/cached-curl.log"
+mkdir -p "${cache_test_dir}"
+printf 'cached file contents' > "${cache_test_dir}/${cache_test_hash}-${cache_test_name}"
+chmod 555 "${cache_test_dir}"
+DOWNLOAD_CACHE_DIR="${cache_test_dir}" DOWNLOAD_CONNECTIONS=1 \
+    bash "${PROJECT_DIR}/scripts/cached-curl.sh" "${cache_test_url}" "${cache_test_output}" \
+    2> "${cache_test_log}"
+chmod 755 "${cache_test_dir}"
+assert_equals "cached file contents" "$(cat "${cache_test_output}")" "cached-curl cache hit output"
+grep -q '\[download cache\] hit' "${cache_test_log}" || \
+    fail "cached-curl must use an existing cache file even if the cache directory is read-only"
+if grep -q '\[download cache\] miss' "${cache_test_log}"; then
+    fail "cached-curl must not redownload an existing cache file"
+fi
+
 if grep -Eq '^[[:space:]]*apt-get[[:space:]]+clean' "${PROJECT_DIR}/scripts/build/trim-chroot.sh"; then
     fail "trim-chroot.sh must not clean the host-mounted apt cache"
 fi
 
 grep -q '! -name download-cache' "${PROJECT_DIR}/scripts/build/trim-chroot.sh" || \
     fail "trim-chroot.sh must preserve the host-mounted download cache"
+
+grep -q 'Acquire::https::Proxy "DIRECT"' "${PROJECT_DIR}/scripts/build.sh" || \
+    fail "apt HTTPS repositories must bypass apt-cacher-ng CONNECT proxy"
+if grep -q 'https_proxy="${APT_PROXY}"' "${PROJECT_DIR}/scripts/build.sh"; then
+    fail "debootstrap must not export apt-cacher-ng as https_proxy"
+fi
 
 OUTPUT_DIR="${tmp_dir}/output"
 stub_bin_dir="${tmp_dir}/bin"
@@ -100,23 +147,6 @@ done
 EOF
 
 chmod +x "${stub_bin_dir}/xorriso" "${stub_bin_dir}/grub-mkrescue"
-
-phase_generate_grub_preview
-assert_file "${OUTPUT_DIR}/grub-preview/${CONTEST_DIR}/grub-entry.cfg"
-assert_file "${OUTPUT_DIR}/grub-preview/boot/grub/grub.cfg"
-assert_file "${OUTPUT_DIR}/${ISO_NAME}-grub-preview.iso"
-assert_file "${OUTPUT_DIR}/${ISO_NAME}-grub-preview.iso.sha256"
-assert_file "${OUTPUT_DIR}/grub-preview/${CONTEST_DIR}/vmlinuz"
-assert_file "${OUTPUT_DIR}/grub-preview/${CONTEST_DIR}/initrd.img"
-assert_file "${OUTPUT_DIR}/grub-preview/${CONTEST_DIR}/${ROOT_SQUASH_NAME}"
-assert_not_file "${OUTPUT_DIR}/grub-preview/${CONTEST_DIR}/.contest-installed"
-
-assert_equals "$(cat <<EOF
--o
-${OUTPUT_DIR}/${ISO_NAME}-grub-preview.iso
-${OUTPUT_DIR}/grub-preview
-EOF
-)" "$(cat "${grub_mkrescue_calls}")" "phase_generate_grub_preview grub-mkrescue argv"
 
 captured_chroot_args="${tmp_dir}/chroot-args.txt"
 chroot() {
@@ -162,13 +192,11 @@ EOF
 
 build_runtime() { echo "build_runtime" >> "${target_log}"; }
 main() { echo "main" >> "${target_log}"; }
-phase_generate_grub_preview() { echo "phase_generate_grub_preview" >> "${target_log}"; }
 phase_publish_update() { echo "phase_publish_update" >> "${target_log}"; }
 print_usage() { echo "print_usage" >> "${target_log}"; }
 
 run_build_target runtime
 run_build_target publish-update
-run_build_target grub-preview
 run_build_target help
 run_build_target full
 
@@ -176,7 +204,6 @@ assert_equals "$(cat <<'EOF'
 build_runtime
 build_runtime
 phase_publish_update
-phase_generate_grub_preview
 print_usage
 main
 EOF

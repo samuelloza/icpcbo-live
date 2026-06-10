@@ -50,7 +50,7 @@ parse_contest_cmdline() {
     CONTEST_RESET_HOME="0"
     CONTEST_RESET_PERSIST="0"
     CONTEST_BOOT_SOURCE="auto"
-    CONTEST_MIN_RAM_MB="4096"
+    CONTEST_MIN_RAM_MB=""
 
     for arg in $(cat /proc/cmdline); do
         case "${arg}" in

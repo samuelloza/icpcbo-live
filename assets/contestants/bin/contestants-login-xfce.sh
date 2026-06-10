@@ -4,12 +4,13 @@ set -euo pipefail
 
 ZEN_TITLE="ICPC Bolivia"
 ZEN_WIDTH="--width=420"
-STATE_DIR="/home/icpc/.local/state/icpcbo"
+
 STATE_FILE="/home/icpc/.local/state/icpcbo/user-id.txt"
 USERNAME_FILE="/home/icpc/.local/state/icpcbo/username.txt"
 DISPLAY_FILE="/home/icpc/.local/state/icpcbo/display-name.txt"
 RAW_RESPONSE_FILE="/home/icpc/.local/state/icpcbo/auth-response.json"
 WALLPAPER_FILE="/home/icpc/.local/state/icpcbo/login-wallpaper.svg"
+
 AUTH_ENV_FILE="/etc/contestiso/auth.env"
 BUILD_PAYLOAD_PY="/opt/icpc/bin/contestants-login-build-payload.py"
 PARSE_RESPONSE_PY="/opt/icpc/bin/contestants-login-parse-response.py"
@@ -23,38 +24,6 @@ if [ -f "${AUTH_ENV_FILE}" ]; then
     source "${AUTH_ENV_FILE}"
 fi
 
-require_commands() {
-    local cmd
-
-    if ! command -v zenity >/dev/null 2>&1; then
-        printf 'Falta la dependencia requerida: zenity\n' >&2
-        exit 4
-    fi
-
-    for cmd in curl python3 gsettings; do
-        if ! command -v "${cmd}" >/dev/null 2>&1; then
-            zenity --error "${ZEN_WIDTH}" --title "${ZEN_TITLE}" \
-                --text="Falta la dependencia requerida: ${cmd}"
-            exit 4
-        fi
-    done
-}
-
-build_payload() {
-    local username="$1"
-    local password="$2"
-
-    python3 "${BUILD_PAYLOAD_PY}" "${username}" "${password}"
-}
-
-parse_response_env() {
-    local response_file="$1"
-    local http_code="$2"
-    local username="$3"
-
-    python3 "${PARSE_RESPONSE_PY}" "${response_file}" "${http_code}" "${username}"
-}
-
 write_wallpaper() {
     local display_name="$1"
     local user_id="$2"
@@ -63,11 +32,9 @@ write_wallpaper() {
 }
 
 apply_wallpaper() {
-    gsettings set org.gnome.desktop.background picture-uri "file://${WALLPAPER_FILE}"
-    gsettings set org.gnome.desktop.background picture-uri-dark "file://${WALLPAPER_FILE}"
-    gsettings set org.gnome.desktop.background picture-options "scaled"
-    gsettings set org.gnome.desktop.background primary-color "#000000"
-    gsettings set org.gnome.desktop.background secondary-color "#000000"
+    xfconf-query -c xfce4-desktop \
+        -p $(xfconf-query -c xfce4-desktop \
+        -l | grep "workspace0/last-image") -s"${WALLPAPER_FILE}" || true
 }
 
 persist_login_state() {
@@ -76,7 +43,7 @@ persist_login_state() {
     local display_name="$3"
     local response_file="$4"
 
-    mkdir -p "${STATE_DIR}"
+    mkdir -p "/home/icpc/.local/state/icpcbo"
     printf '%s\n' "${username}" > "${USERNAME_FILE}"
     printf '%s\n' "${user_id}" > "${STATE_FILE}"
     printf '%s\n' "${display_name}" > "${DISPLAY_FILE}"
@@ -84,15 +51,19 @@ persist_login_state() {
 }
 
 authenticate() {
-    local user_id="$1"
+    local username="$1"
     local password="$2"
-    local payload response_file env_file http_code curl_rc
+    local payload
+    local response_file
+    local env_file
+    local http_code
+    local curl_rc
 
     response_file="$(mktemp)"
     env_file="$(mktemp)"
     curl_rc=0
 
-    payload="$(build_payload "${user_id}" "${password}")"
+    payload="$(python3 "${BUILD_PAYLOAD_PY}" "${username}" "${password}")"
     http_code="$(curl \
         --silent --show-error \
         --max-time "${AUTH_SERVICE_TIMEOUT}" \
@@ -109,7 +80,7 @@ authenticate() {
         return 2
     fi
 
-    parse_response_env "${response_file}" "${http_code}" "${user_id}" > "${env_file}"
+    python3 "${PARSE_RESPONSE_PY}" "${response_file}" "${http_code}" "${username}" > "${env_file}"
     # shellcheck source=/dev/null
     source "${env_file}"
 
@@ -122,22 +93,20 @@ authenticate() {
 
     write_wallpaper "${AUTH_DISPLAY_NAME}" "${AUTH_USER_ID}"
     apply_wallpaper
-    persist_login_state "${user_id}" "${AUTH_USER_ID}" "${AUTH_DISPLAY_NAME}" "${response_file}"
-    if command -v logger >/dev/null 2>&1; then
-        logger -p local0.info "ICPCBO-LOGIN: authenticated username ${user_id} with id ${AUTH_USER_ID}"
-    fi
+    persist_login_state "${username}" "${AUTH_USER_ID}" "${AUTH_DISPLAY_NAME}" "${response_file}"
+
+    logger -p local0.info "ICPCBO-LOGIN: authenticated username ${username} with id ${AUTH_USER_ID}" || true
 
     rm -f "${response_file}" "${env_file}"
-
     zenity --info "${ZEN_WIDTH}" --title "${ZEN_TITLE}" \
         --text="Inicio de sesión correcto para ${AUTH_DISPLAY_NAME}."
     return 0
 }
 
 main() {
-    local credentials username password
-
-    require_commands
+    local credentials
+    local username
+    local password
 
     if [ -z "${AUTH_SERVICE_URL}" ]; then
         zenity --error "${ZEN_WIDTH}" --title "${ZEN_TITLE}" \

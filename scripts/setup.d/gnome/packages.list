@@ -1,0 +1,117 @@
+systemd-sysv
+sudo
+locales
+
+# GNOME
+gnome-shell
+gnome-session
+gnome-settings-daemon
+gnome-control-center
+gdm3
+nautilus
+gnome-terminal
+zenity
+evince
+file-roller
+gnome-themes-extra
+dbus-user-session
+libglib2.0-bin
+libgtk-3-bin
+libxi6
+libxrender1
+libxtst6
+libfontconfig1
+
+# Red
+network-manager
+wpasupplicant
+wireless-regdb
+iw
+rfkill
+firmware-linux
+firmware-linux-free
+firmware-iwlwifi
+firmware-realtek
+firmware-atheros
+firmware-ath9k-htc
+firmware-brcm80211
+firmware-mediatek
+firmware-misc-nonfree
+
+# Arranque
+linux-image-amd64
+initramfs-tools
+
+# Build
+ca-certificates
+curl
+python3
+
+# Teclado
+console-setup
+
+# Instalacion
+efibootmgr
+grub-efi-amd64
+grub-pc-bin
+
+# Instalacion completa
+squashfs-tools
+parted
+dosfstools
+e2fsprogs
+
+# Utilidades
+net-tools
+openssh-server
+ansible
+xvfb
+oathtool
+imagemagick
+zabbix-agent2
+wget
+axel
+
+# Compilacion
+build-essential
+autoconf
+autotools-dev
+python-is-python3
+
+# Desarrollo
+firefox-esr
+git
+ddd
+gdb
+valgrind
+konsole
+byobu
+geany
+geany-plugin-automark
+geany-plugin-lineoperations
+geany-plugin-overview
+emacs
+gedit
+joe
+kate
+kdevelop
+nano
+vim
+vim-gtk3
+neovim
+make
+gcc
+g++
+openjdk-21-jdk
+openjdk-21-doc
+ruby
+codeblocks
+htop
+
+manpages-dev
+libwxgtk3.2-1
+
+# Documentacion
+python3-doc
+at
+fonts-recommended

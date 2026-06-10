@@ -117,6 +117,10 @@ IS_EFI=0
 _log "Modo de arranque: $([ "${IS_EFI}" = "1" ] && echo UEFI || echo BIOS)"
 
 cleanup_mounts() {
+    if mountpoint -q /run/contest-scan 2>/dev/null; then
+        umount /run/contest-scan 2>/dev/null || true
+    fi
+
     for mp in \
         "${MOUNT_TMP}/boot/efi" \
         "${MOUNT_TMP}/run" \
@@ -127,6 +131,7 @@ cleanup_mounts() {
         "${MOUNT_TMP}"; do
         mountpoint -q "${mp}" 2>/dev/null && umount -lf "${mp}" || true
     done
+    rmdir /run/contest-scan 2>/dev/null || true
     rmdir "${MOUNT_TMP}" 2>/dev/null || true
 }
 trap cleanup_mounts EXIT
@@ -169,6 +174,7 @@ DISK_SIZE_GB=$(lsblk -d -n -b -o SIZE "${TARGET_DISK}" 2>/dev/null | awk '{print
 _log "Disco destino: ${TARGET_DISK} (${DISK_SIZE_GB} GB)"
 
 mkdir -p "${MOUNT_TMP}"
+mkdir -p /run/contest-scan
 for fstype in ext4 xfs ext3; do
     if mount -t "${fstype}" -o ro "${TARGET_DISK}"?* /run/contest-scan 2>/dev/null; then
         if [ -f "/run/contest-scan${CONTEST_DIR}/${MARKER}" ]; then

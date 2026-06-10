@@ -15,6 +15,31 @@ connections="${DOWNLOAD_CONNECTIONS}"
 url_hash="$(printf '%s' "${url}" | sha256sum | cut -c1-16)"
 url_base="$(basename "${url%%\?*}" | tr -cs 'a-zA-Z0-9._-' '_' | cut -c1-80)"
 cache_file="${cache_dir}/${url_hash}-${url_base}"
+partial_file="${cache_file}.tmp"
+
+migrate_old_partial_file() {
+    local cache_name
+    local old_partial_file
+
+    if [ -f "${partial_file}" ]; then
+        return 0
+    fi
+
+    cache_name="$(basename "${cache_file}")"
+    old_partial_file="$(
+        find "${cache_dir}" -maxdepth 1 -type f \
+            -name "${cache_name}.*.tmp" 2>/dev/null | head -n 1 || true
+    )"
+
+    if [ -n "${old_partial_file}" ]; then
+        echo "I: [download cache] resume partial: ${url}" >&2
+        mv "${old_partial_file}" "${partial_file}"
+
+        if [ -f "${old_partial_file}.st" ]; then
+            mv "${old_partial_file}.st" "${partial_file}.st"
+        fi
+    fi
+}
 
 download_file() {
     local src="$1"
@@ -26,26 +51,45 @@ download_file() {
     fi
 
     if command -v wget >/dev/null 2>&1; then
-        wget -q -O "${dst}" "${src}"
+        wget -q -c -O "${dst}" "${src}"
         return 0
     fi
 
-    curl -fsSL "${src}" -o "${dst}"
-}
-
-if [ -d "${cache_dir}" ] && [ -w "${cache_dir}" ]; then
-    if [ -f "${cache_file}" ]; then
-        echo "I: [download cache] hit  : ${url}" >&2
-        cp "${cache_file}" "${output}"
-        exit 0
+    if [ -f "${dst}" ]; then
+        curl -fSL -C - "${src}" -o "${dst}"
+        return 0
     fi
 
-    echo "I: [download cache] miss : ${url}" >&2
-    tmp_file="${cache_file}.tmp"
-    rm -f "${tmp_file}"
-    download_file "${url}" "${tmp_file}"
-    mv "${tmp_file}" "${cache_file}"
+    curl -fSL "${src}" -o "${dst}"
+}
+
+copy_from_cache() {
+    echo "I: [download cache] hit  : ${url}" >&2
     cp "${cache_file}" "${output}"
+}
+
+save_to_cache() {
+    migrate_old_partial_file
+
+    if [ -f "${partial_file}" ]; then
+        echo "I: [download cache] resume: ${url}" >&2
+    else
+        echo "I: [download cache] miss : ${url}" >&2
+    fi
+
+    download_file "${url}" "${partial_file}"
+    mv "${partial_file}" "${cache_file}"
+    rm -f "${partial_file}.st"
+    cp "${cache_file}" "${output}"
+}
+
+if [ -f "${cache_file}" ]; then
+    copy_from_cache
+    exit 0
+fi
+
+if [ -d "${cache_dir}" ] && [ -w "${cache_dir}" ]; then
+    save_to_cache
     exit 0
 fi
 

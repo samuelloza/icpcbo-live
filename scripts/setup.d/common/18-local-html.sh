@@ -5,7 +5,7 @@ set -euo pipefail
 PROFILE_DIR="/tmp/contestants"
 LOCAL_DOC_SRC="/tmp/assets/html"
 CACHE_DIR="/tmp/cache"
-DOC_DST="/usr/share/doc/icpcbo"
+DOC_DST="/usr/share/doc/contest"
 FONT_DST="${DOC_DST}/fonts"
 
 mkdir -p "${DOC_DST}" "${FONT_DST}" "${CACHE_DIR}"

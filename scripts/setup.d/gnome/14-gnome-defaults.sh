@@ -38,9 +38,13 @@ idle-delay=uint32 900
 lock-enabled=true
 lock-delay=uint32 30
 
+[org/gnome/desktop/interface]
+color-scheme='prefer-dark'
+gtk-theme='Adwaita-dark'
+
 [org/gnome/desktop/background]
-picture-uri='file://${OPT_DIR}/misc/icpcbo-wallpaper.png'
-picture-uri-dark='file://${OPT_DIR}/misc/icpcbo-wallpaper.png'
+picture-uri='file://${OPT_DIR}/misc/desktop-wallpaper.svg'
+picture-uri-dark='file://${OPT_DIR}/misc/desktop-wallpaper.svg'
 picture-options='centered'
 primary-color='#000000'
 secondary-color='#000000'

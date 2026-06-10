@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Inicio
+Comment=Inicio
+Icon=firefox
+Exec=/opt/icpc/bin/xfce-autostart.sh
+OnlyShowIn=XFCE;

@@ -53,6 +53,27 @@ rootfs_tmp_path() {
     printf '%s\n' "${path}"
 }
 
+desktop_setup_dir() {
+    local dir="${PROJECT_DIR}/scripts/setup.d/${DESKTOP_PROFILE}"
+
+    [[ -d "${dir}" ]] || die "Perfil de escritorio no encontrado: ${DESKTOP_PROFILE}"
+    printf '%s\n' "${dir}"
+}
+
+desktop_packages_list() {
+    local candidate="$(desktop_setup_dir)/packages.list"
+
+    [[ -f "${candidate}" ]] || die "No existe lista de paquetes: ${candidate}"
+    printf '%s\n' "${candidate}"
+}
+
+desktop_packages_remove_list() {
+    local candidate="$(desktop_setup_dir)/packages-remove.list"
+
+    [[ -f "${candidate}" ]] || die "No existe lista de purga: ${candidate}"
+    printf '%s\n' "${candidate}"
+}
+
 cleanup() {
     umount_chroot || true
 }
@@ -71,14 +92,18 @@ copy_to_rootfs_tmp() {
 }
 
 copy_setup_hooks() {
-    local src="${PROJECT_DIR}/scripts/setup.d"
+    local common_src="${PROJECT_DIR}/scripts/setup.d/common"
+    local desktop_src="$(desktop_setup_dir)"
     local dst="$(rootfs_tmp_path "setup.d")"
+    local hook
 
     rm -rf "${dst}"
     mkdir -p "${dst}"
 
-    [[ -d "${src}" ]] || return 0
-    cp -a "${src}/." "${dst}/"
+    for hook in "${common_src}"/*.sh "${desktop_src}"/*.sh; do
+        [[ -e "${hook}" ]] || continue
+        cp -a "${hook}" "${dst}/"
+    done
 }
 
 # Copia scripts auxiliares del host dentro del chroot para que ambas
@@ -101,16 +126,16 @@ copy_repo_assets() {
         cp -a "${src}/." "${dst}/"
     fi
 
-    if [[ -f "${PROJECT_DIR}/icpcbo-wallpaper.png" ]]; then
+    if [[ -f "${PROJECT_DIR}/desktop-wallpaper.svg" ]]; then
         mkdir -p "${dst}/contestants/misc"
-        cp "${PROJECT_DIR}/icpcbo-wallpaper.png" \
-            "${dst}/contestants/misc/icpcbo-wallpaper.png"
+        cp "${PROJECT_DIR}/desktop-wallpaper.svg" \
+            "${dst}/contestants/misc/desktop-wallpaper.svg"
     fi
 }
 
 copy_chroot_inputs() {
-    copy_to_rootfs_tmp "${PROJECT_DIR}/config/packages.list"
-    copy_to_rootfs_tmp "${PROJECT_DIR}/config/packages-remove.list"
+    copy_to_rootfs_tmp "$(desktop_packages_list)" "packages.list"
+    copy_to_rootfs_tmp "$(desktop_packages_remove_list)" "packages-remove.list"
     cp -a "${PROJECT_DIR}/overlay/." "${ROOTFS_DIR}/"
     copy_setup_hooks
     copy_chroot_scripts
@@ -164,7 +189,7 @@ phase_bootstrap() {
 
     local debootstrap_env=()
     if [[ -n "${APT_PROXY}" ]]; then
-        debootstrap_env=(env http_proxy="${APT_PROXY}" https_proxy="${APT_PROXY}")
+        debootstrap_env=(env http_proxy="${APT_PROXY}")
     fi
     "${debootstrap_env[@]}" debootstrap --arch="${ARCH}" --variant=minbase \
         "${DEBIAN_SUITE}" "${ROOTFS_DIR}" "${DEBIAN_MIRROR}"
@@ -181,6 +206,7 @@ APT
     if [[ -n "${APT_PROXY}" ]]; then
         cat > "${ROOTFS_DIR}/etc/apt/apt.conf.d/01proxy" <<APT_PROXY_EOF
 Acquire::http::Proxy "${APT_PROXY}";
+Acquire::https::Proxy "DIRECT";
 APT_PROXY_EOF
     fi
 }
@@ -193,6 +219,7 @@ phase_install_and_customize() {
     copy_chroot_inputs
 
     run_chroot_script "install-and-customize-chroot.sh" \
+        DESKTOP_PROFILE="${DESKTOP_PROFILE}" \
         HOSTNAME="${HOSTNAME}" \
         LOCALE="${LOCALE}" \
         SUPPORTED_LOCALES="${SUPPORTED_LOCALES}" \
@@ -261,52 +288,6 @@ phase_pack_runtime() {
            var/cache/apt var/lib/apt/lists var/log var/tmp
 
     write_runtime_grub_entry "${runtime_target}/grub-entry.cfg"
-}
-
-phase_generate_grub_preview() {
-    phase "05 Generate GRUB Preview"
-
-    local preview_dir="${OUTPUT_DIR}/grub-preview"
-    local preview_runtime_dir="${preview_dir}/${CONTEST_DIR}"
-    local preview_iso_grub_dir="${preview_dir}/boot/grub"
-    local preview_iso="${OUTPUT_DIR}/${ISO_NAME}-grub-preview.iso"
-    local grub_log="/tmp/grub-mkrescue-preview.log"
-
-    require_cmd grub-mkrescue xorriso sha256sum
-
-    rm -rf "${preview_dir}"
-    rm -f "${preview_iso}" "${preview_iso}.sha256" "${grub_log}"
-    mkdir -p "${preview_runtime_dir}" "${preview_iso_grub_dir}"
-
-    write_runtime_grub_entry "${preview_runtime_dir}/grub-entry.cfg"
-    write_iso_grub_cfg "${preview_iso_grub_dir}/grub.cfg"
-
-    cat > "${preview_runtime_dir}/vmlinuz" <<'EOF'
-GRUB preview placeholder kernel.
-This file only exists so the preview ISO exposes the expected path.
-EOF
-
-    cat > "${preview_runtime_dir}/initrd.img" <<'EOF'
-GRUB preview placeholder initrd.
-This file only exists so the preview ISO exposes the expected path.
-EOF
-
-    cat > "${preview_runtime_dir}/${ROOT_SQUASH_NAME}" <<'EOF'
-GRUB preview placeholder squashfs.
-This file only exists so the preview ISO exposes the expected path.
-EOF
-
-    grub-mkrescue -o "${preview_iso}" "${preview_dir}" >"${grub_log}" 2>&1 || {
-        cat "${grub_log}" >&2 || true
-        die "grub-mkrescue failed for preview ISO"
-    }
-
-    sha256sum "${preview_iso}" > "${preview_iso}.sha256"
-
-    log "GRUB preview runtime entry: ${preview_runtime_dir}/grub-entry.cfg"
-    log "GRUB preview ISO config:   ${preview_iso_grub_dir}/grub.cfg"
-    log "GRUB preview ISO:          ${preview_iso}"
-    log "GRUB preview SHA256:       ${preview_iso}.sha256"
 }
 
 phase_build_iso() {
@@ -450,13 +431,12 @@ main() {
 
 print_usage() {
     cat <<EOF
-Usage: $(basename "$0") [full|runtime|publish-update|grub-preview|help]
+Usage: $(basename "$0") [full|runtime|publish-update|help]
 
 Targets:
   full          Build completo (default)
   runtime       Construye hasta runtime/ + grub-entry.cfg
   publish-update Construye runtime y publica artifacts + manifest en updates/
-  grub-preview  Genera grub.cfg + grub-entry.cfg + ISO preview booteable
   help          Muestra esta ayuda
 EOF
 }
@@ -474,9 +454,6 @@ run_build_target() {
         publish-update|update|publish)
             build_runtime
             phase_publish_update
-            ;;
-        grub-preview|grub|preview-grub)
-            phase_generate_grub_preview
             ;;
         help|-h|--help)
             print_usage
