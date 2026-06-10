@@ -53,6 +53,3 @@ if [ -f /etc/mke2fs.conf ]; then
     copy_file config /etc/mke2fs.conf
 fi
 
-if [ -f /etc/contest/ascii-wallpaper.txt ]; then
-    copy_file config /etc/contest/ascii-wallpaper.txt
-fi
