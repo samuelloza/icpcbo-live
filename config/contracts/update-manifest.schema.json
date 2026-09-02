@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contestiso.local/contracts/update-manifest.schema.json",
+  "title": "UpdateManifest",
+  "description": "Manifiesto de actualización del runtime. Se publica junto a <manifest>.sig, que es base64(Ed25519(bytes canónicos del manifiesto)). Bytes canónicos: JSON UTF-8 con claves ordenadas, separadores (\",\",\":\") y \\n final.",
+  "x-maxBytes": 8192,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "artifacts"],
+  "properties": {
+    "version": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$", "not": {"pattern": "\\.\\."}},
+    "artifacts": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"pattern": "^[A-Za-z0-9_]{1,64}$"},
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["url", "sha256"],
+        "properties": {
+          "url": {"type": "string", "description": "Relativa al manifiesto; el cliente hace urljoin.", "pattern": "^[^\\s]+$"},
+          "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+        }
+      },
+      "x-expected-keys": ["vmlinuz", "initrd_img", "filesystem_squashfs", "grub_entry_cfg"]
+    },
+    "next_signing_key": {
+      "type": "string",
+      "description": "Clave pública Ed25519 en PEM que firmará la SIGUIENTE versión. Se promueve a 'pending' al aplicar esta versión."
+    },
+    "next_signing_key_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "sha256 de los bytes exactos de next_signing_key."
+    }
+  },
+  "dependentRequired": {
+    "next_signing_key": ["next_signing_key_sha256"],
+    "next_signing_key_sha256": ["next_signing_key"]
+  }
+}

@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# Prepara los servicios de despliegue del laboratorio que corren en el sistema en vivo.
-# - contest-full-install.service : instalación completa a disco
-#   (unsquashfs + GRUB) con contest.install_mode=full
-# - contest-deploy.service       : instalación por overlay
-#   (copia del squashfs) en el primer arranque del ISO
+# Prepara únicamente los servicios del sistema completo. El despliegue LAN y
+# el mini initramfs viven en el proyecto separado mini-deploy.
 
 set -euo pipefail
 
@@ -21,8 +18,6 @@ Unit=stats-report.service
 WantedBy=timers.target
 TIMER
 
-systemctl enable contest-full-install.service
-systemctl enable contest-deploy.service
 systemctl enable contest-overlay-provision.service
 systemctl enable contest-update.service
 systemctl enable stats-report.timer

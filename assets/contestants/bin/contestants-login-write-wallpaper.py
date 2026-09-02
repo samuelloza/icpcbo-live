@@ -14,12 +14,12 @@ def pick_font_size(name: str) -> int:
 
 
 def main() -> None:
-    name = sys.argv[1].strip() or "Contestant"
-    user_id = sys.argv[2].strip()
+    name = sys.argv[1].strip() or "Equipo"
+    team_id = sys.argv[2].strip()
     output = Path(sys.argv[3])
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    subtitle = f"ID: {user_id}" if user_id else "ICPC Bolivia"
+    subtitle = f"Equipo: {team_id}" if team_id else "ICPC Bolivia"
     font_size = pick_font_size(name)
 
     svg = f"""<?xml version="1.0" encoding="UTF-8"?>

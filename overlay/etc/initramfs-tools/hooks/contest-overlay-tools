@@ -47,9 +47,9 @@ copy_contest_binary() {
 # posterior a la instalación pueda crear y montar overlay.img.
 # Referencia: https://manpages.debian.org/testing/initramfs-tools-core/initramfs-tools.7.en.html
 copy_required_binary truncate
+copy_required_binary sha256sum
 copy_contest_binary mke2fs /usr/lib/contest-initramfs/bin/mke2fs.real
 
 if [ -f /etc/mke2fs.conf ]; then
     copy_file config /etc/mke2fs.conf
 fi
-

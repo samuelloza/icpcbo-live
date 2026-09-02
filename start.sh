@@ -43,6 +43,46 @@ latest_iso_path() {
         || true
 }
 
+mini_artifacts_dir() {
+    if [[ -n "${MINI_ARTIFACTS_DIR:-}" ]]; then
+        printf '%s\n' "${MINI_ARTIFACTS_DIR}"
+    elif [[ -f "${RUNTIME_DIR}/${CONTEST_DIR}/filesystem.squashfs" ]]; then
+        printf '%s\n' "${RUNTIME_DIR}/${CONTEST_DIR}"
+    else
+        python3 - "${UPDATES_DIR}" <<'PY'
+import json, pathlib, sys
+updates = pathlib.Path(sys.argv[1])
+try:
+    version = json.loads((updates / "manifest.json").read_text())["version"]
+except (OSError, ValueError, KeyError):
+    raise SystemExit(1)
+artifact = updates / "artifacts" / version
+required = ("filesystem.squashfs", "vmlinuz", "initrd.img", "grub-entry.cfg")
+if not all((artifact / name).is_file() for name in required):
+    raise SystemExit(1)
+print(artifact)
+PY
+    fi
+}
+
+build_mini_deploy() {
+    local artifacts build_apt_proxy="${APT_PROXY}"
+    artifacts="$(mini_artifacts_dir)"
+    [[ -f "${artifacts}/filesystem.squashfs" ]] || {
+        echo "ERROR: no existe runtime completo en ${artifacts}" >&2
+        echo "Genera primero la seed una vez, o indica MINI_ARTIFACTS_DIR=/ruta/al/runtime." >&2
+        return 1
+    }
+    if ! start_apt_cacher; then
+        echo "[apt-cacher] No disponible: mini build descargará directo." >&2
+        build_apt_proxy=""
+    fi
+    ARTIFACTS_DIR="${artifacts}" APT_PROXY="${build_apt_proxy}" \
+        METADATA_DIR="${MINI_METADATA_DIR:-${UPDATES_DIR}}" \
+        OUTPUT_DIR="${PROJECT_DIR}/mini-deploy/output" \
+        bash "${PROJECT_DIR}/mini-deploy/build-iso.sh"
+}
+
 OUTPUT_DIR_RESOLVED="$(resolve_output_dir)"
 if [[ -z "${ISO_PATH}" ]]; then
     ISO_PATH="$(latest_iso_path "${OUTPUT_DIR_RESOLVED}")"
@@ -82,6 +122,20 @@ reset_vm() {
     virsh undefine "${name}" 2>/dev/null || true
 }
 
+# Empieza cada prueba con un disco lab EN BLANCO. Si no, el GRUB del ISO
+# encuentra la instalación de una corrida anterior (.contest-installed en el
+# disco) y arranca ESE squashfs viejo — no el del ISO nuevo. KEEP_LAB_DISK=1
+# lo conserva (para probar persistencia entre reinicios).
+reset_lab_disk() {
+    [[ "${KEEP_LAB_DISK:-0}" == "1" ]] && { echo "KEEP_LAB_DISK=1: se conserva ${LAB_DISK_PATH}"; return 0; }
+    reset_vm "${VM_NAME}"
+    reset_vm "${WIN_XP_VM_NAME}"
+    if [[ -f "${LAB_DISK_PATH}" ]]; then
+        echo "Disco lab reiniciado (en blanco): ${LAB_DISK_PATH}"
+        rm -f "${LAB_DISK_PATH}"
+    fi
+}
+
 ensure_lab_disk() {
     if [[ ! -f "${LAB_DISK_PATH}" ]]; then
         create_lab_disk "${LAB_DISK_PATH}" "${DISK_SIZE_GB}"
@@ -100,21 +154,61 @@ require_iso() {
     fi
 }
 
-launch_vm() {
-    local selected_iso="${1:?missing ISO path}"
-    local wipe_lab_disk="${2:-0}"
+# Libvirt ejecuta QEMU como libvirt-qemu, no como quien lanzó start.sh. En
+# algunos hosts /dev/kvm otorga ACL solo al usuario de escritorio; dar acceso
+# al usuario real de QEMU antes de elegir KVM.
+ensure_libvirt_kvm_access() {
+    getent passwd libvirt-qemu >/dev/null 2>&1 || return 0
+    runuser -u libvirt-qemu -- test -r /dev/kvm -a -w /dev/kvm 2>/dev/null && return 0
+    command -v setfacl >/dev/null 2>&1 || return 1
+    setfacl -m u:libvirt-qemu:rw /dev/kvm 2>/dev/null || return 1
+    runuser -u libvirt-qemu -- test -r /dev/kvm -a -w /dev/kvm 2>/dev/null
+}
 
-    if [[ "${wipe_lab_disk}" == "1" && -f "${LAB_DISK_PATH}" ]]; then
-        echo "Borrando disco lab: ${LAB_DISK_PATH}"
-        rm -f "${LAB_DISK_PATH}"
+# Aceleración de la VM. Devuelve "kvm" (rápido) o "qemu" (emulación TCG, lento
+# pero funciona si /dev/kvm no está o libvirt no puede abrirlo.
+vm_accel() {
+    if [[ ! -e /dev/kvm ]]; then
+        modprobe kvm_intel 2>/dev/null || modprobe kvm_amd 2>/dev/null || true
+        sleep 1
+    fi
+    if [[ -e /dev/kvm && -r /dev/kvm && -w /dev/kvm ]] && ensure_libvirt_kvm_access; then
+        echo kvm
+    else
+        echo "[start.sh] KVM no disponible para libvirt: la VM correrá con emulación (LENTA)." >&2
+        echo "[start.sh]   revisa /dev/kvm, setfacl y los módulos kvm_intel/kvm_amd." >&2
+        echo qemu
+    fi
+}
+
+open_vm_interfaces() {
+    local name="$1"
+
+    if command -v virt-viewer >/dev/null 2>&1; then
+        run_as_host_user env \
+            DISPLAY="${DISPLAY:-}" \
+            XAUTHORITY="${XAUTHORITY:-}" \
+            WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+            XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \
+            virt-viewer --connect qemu:///system "${name}" >/dev/null 2>&1 &
+    else
+        echo "[start.sh] virt-viewer no encontrado; la UI sigue disponible por SPICE." >&2
     fi
 
+}
+
+launch_vm() {
+    local selected_iso="${1:?missing ISO path}"
+
+    reset_lab_disk
     ensure_lab_disk
     reset_vm "${VM_NAME}"
 
-    echo "Iniciando VM  ISO: $(basename "${selected_iso}")  HDD: $(basename "${LAB_DISK_PATH}")"
+    echo "Iniciando VM  ISO: $(basename "${selected_iso}")  HDD: $(basename "${LAB_DISK_PATH}") (en blanco)"
+    echo "  Para probar solo el arranque a escritorio: en GRUB elige 'Probar live (sin persistencia)'."
     virt-install \
         --connect qemu:///system \
+        --virt-type "$(vm_accel)" \
         --name "${VM_NAME}" \
         --ram 6048 \
         --vcpus 2 \
@@ -124,9 +218,38 @@ launch_vm() {
         --network network=default \
         --graphics spice \
         --video virtio \
-        --serial pty \
+        --autoconsole none \
         --boot cdrom,hd,menu=on \
         --cpu host-model
+
+    open_vm_interfaces "${VM_NAME}"
+}
+
+launch_mini_existing_disk() {
+    local selected_iso="${1:?missing ISO path}"
+    require_iso "${selected_iso}"
+    # El disco de laboratorio es descartable y se reinicia; WIN_XP_DISK nunca
+    # se incluye ni se modifica en esta ruta.
+    reset_lab_disk
+    ensure_lab_disk
+    reset_vm "${VM_NAME}"
+    echo "Iniciando Preparación del Equipo con disco existente: $(basename "${LAB_DISK_PATH}")"
+    virt-install \
+        --connect qemu:///system \
+        --virt-type "$(vm_accel)" \
+        --name "${VM_NAME}" \
+        --ram 6048 \
+        --vcpus 2 \
+        --disk "path=${LAB_DISK_PATH},format=qcow2,bus=virtio" \
+        --os-variant debian13 \
+        --cdrom "${selected_iso}" \
+        --network network=default \
+        --graphics spice \
+        --video virtio \
+        --autoconsole none \
+        --boot cdrom,hd,menu=on \
+        --cpu host-model
+    open_vm_interfaces "${VM_NAME}"
 }
 
 launch_winxp() {
@@ -141,6 +264,7 @@ launch_winxp() {
 
     chmod o+x "$(dirname "${WIN_XP_DISK}")" 2>/dev/null || true
     reset_vm "${WIN_XP_VM_NAME}"
+    reset_lab_disk
     ensure_lab_disk
 
     if [[ "${with_iso}" == "1" ]]; then
@@ -153,6 +277,7 @@ launch_winxp() {
 
     virt-install \
         --connect qemu:///system \
+        --virt-type "$(vm_accel)" \
         --name "${WIN_XP_VM_NAME}" \
         --ram 6048 \
         --vcpus 2 \
@@ -163,7 +288,10 @@ launch_winxp() {
         --network network=default \
         --graphics spice \
         --video vga \
+        --autoconsole none \
         "${extra_args[@]}"
+
+    open_vm_interfaces "${WIN_XP_VM_NAME}"
 }
 
 start_apt_cacher() {
@@ -197,9 +325,19 @@ start_apt_cacher() {
 build_target() {
     local target="${1:?missing build target}"
     local desktop_profile="${2:-${DESKTOP_PROFILE}}"
+    local build_apt_proxy="${APT_PROXY}"
 
-    start_apt_cacher
-    DESKTOP_PROFILE="${desktop_profile}" bash "${BUILD_SCRIPT}" "${target}"
+    # El caché APT es una optimización. Si no arranca (sin docker, imagen
+    # ausente, timeout) el build NO debe abortar: se construye sin proxy,
+    # descargando directo. Antes 'start_apt_cacher' devolvía 1 y 'set -e'
+    # mataba el build en silencio.
+    if ! start_apt_cacher; then
+        echo "[apt-cacher] No disponible: el build descargará directo (más lento)."
+        build_apt_proxy=""
+    fi
+
+    APT_PROXY="${build_apt_proxy}" DESKTOP_PROFILE="${desktop_profile}" \
+        bash "${BUILD_SCRIPT}" "${target}"
 }
 
 show_built_iso() {
@@ -219,13 +357,16 @@ show_built_iso() {
 
 start_usage() {
     cat <<EOF
-Uso: $(basename "$0") [menu|run|build-gnome|build-xfce|create-disk|help]
+Uso: $(basename "$0") [menu|run-vm|run|build-mini|run-mini|build-seed|build-deploy|create-disk|help]
 
 Acciones:
   menu            abre el menú interactivo
-  run             inicia el entorno de prueba con el ISO más nuevo
-  build-gnome     construye el ISO con GNOME y muestra la ruta
-  build-xfce      construye el ISO con XFCE y muestra la ruta
+  run-vm          arranca el ISO más nuevo en una VM Debian limpia (borra el disco lab)
+  run             arranca el ISO junto a la VM Windows XP (borra el disco lab, no el de Windows)
+  build-seed      construye el ISO seed GNOME y lo inicia en una VM limpia
+  build-deploy    alias de build-mini y arranque en una VM limpia
+  build-mini      construye solo la ISO mini, sin iniciar una VM
+  run-mini        inicia la ISO mini existente sin construirla
   create-disk     crea el disco NTFS lab (se usa para probar una imagen de windows xp)
   help            muestra esta ayuda
 EOF
@@ -242,15 +383,34 @@ run_start_action() {
             require_iso "${selected_iso}"
             launch_winxp 1 "${selected_iso}"
             ;;
-        build-gnome)
-            build_target full gnome
+        run-vm)
+            selected_iso="${ISO_PATH}"
+            [[ -n "${selected_iso}" ]] || selected_iso="$(latest_iso_path "${OUTPUT_DIR_RESOLVED}")"
+            require_iso "${selected_iso}"
+            launch_vm "${selected_iso}"
+            ;;
+        build-seed)
+            build_target seed gnome
             selected_iso="$(latest_iso_path "${OUTPUT_DIR_RESOLVED}")"
+            show_built_iso "${selected_iso}"
+            require_iso "${selected_iso}"
+            launch_vm "${selected_iso}"
+            ;;
+        build-deploy)
+            build_mini_deploy
+            selected_iso="${PROJECT_DIR}/mini-deploy/output/mini-deploy.iso"
+            show_built_iso "${selected_iso}"
+            require_iso "${selected_iso}"
+            launch_vm "${selected_iso}"
+            ;;
+        build-mini)
+            build_mini_deploy
+            selected_iso="${PROJECT_DIR}/mini-deploy/output/mini-deploy.iso"
             show_built_iso "${selected_iso}"
             ;;
-        build-xfce)
-            build_target full xfce4
-            selected_iso="$(latest_iso_path "${OUTPUT_DIR_RESOLVED}")"
-            show_built_iso "${selected_iso}"
+        run-mini)
+            selected_iso="${PROJECT_DIR}/mini-deploy/output/mini-deploy.iso"
+            launch_mini_existing_disk "${selected_iso}"
             ;;
         create-disk)
             create_lab_disk "${LAB_DISK_PATH}" 15
@@ -276,25 +436,33 @@ start_interactive_menu() {
 ========================================
  Start Menu
 ========================================
-1) Iniciar entorno de prueba
-2) Generar ISO GNOME
-3) Generar ISO XFCE
-4) Crear disco NTFS lab
+1) Probar ISO en VM limpia (Debian, borra el disco lab)
+2) Generar e iniciar ISO Seed en VM limpia
+3) Generar e iniciar ISO Deploy ligera en VM limpia
+4) Generar ISO mini (sin iniciar VM)
+5) Iniciar ISO mini existente en VM limpia
+6) Crear disco NTFS lab
+7) Probar ISO junto a Windows XP (borra el disco lab, NO el de Windows)
 0) Salir
+
+  (KEEP_LAB_DISK=1 conserva el disco lab para probar persistencia)
 EOF
 
         read -r -p "Selecciona una opción: " option
         echo
 
         case "${option}" in
-            1) run_start_action run; return 0 ;;
-            2) run_start_action build-gnome; return 0 ;;
-            3) run_start_action build-xfce; return 0 ;;
-            4)
+            1) run_start_action run-vm; return 0 ;;
+            2) run_start_action build-seed; return 0 ;;
+            3) run_start_action build-deploy; return 0 ;;
+            4) run_start_action build-mini; return 0 ;;
+            5) run_start_action run-mini; return 0 ;;
+            6)
                 run_start_action create-disk
                 echo
                 read -r -p "Presiona Enter para volver al menú..." _
                 ;;
+            7) run_start_action run; return 0 ;;
             0) return 0 ;;
             *)
                 echo "Opción inválida."

@@ -13,11 +13,27 @@ else
     . "${lib_dir}/lib/runtime-layout.sh"
 fi
 
-LOG="${CONTEST_UPDATE_LOG:-/var/log/contest-update.log}"
-MOUNT_TMP="${CONTEST_UPDATE_MOUNT_TMP:-/mnt/contest-update-target}"
-UPDATE_ENV="${CONTEST_UPDATE_ENV:-/etc/contestiso/update.env}"
-PROC_MOUNTS_FILE="${PROC_MOUNTS_FILE:-/proc/mounts}"
-CONTEST_MEDIA_ROOT="${CONTEST_MEDIA_ROOT:-/run/contest-media}"
+LOG="/var/log/contest-update.log"
+MOUNT_TMP="/mnt/contest-update-target"
+UPDATE_ENV="/etc/contestiso/update.env"
+PROC_MOUNTS_FILE="/proc/mounts"
+CONTEST_MEDIA_ROOT="/run/contest-media"
+
+if [ -n "${CONTEST_UPDATE_LOG:-}" ]; then
+    LOG="${CONTEST_UPDATE_LOG}"
+fi
+if [ -n "${CONTEST_UPDATE_MOUNT_TMP:-}" ]; then
+    MOUNT_TMP="${CONTEST_UPDATE_MOUNT_TMP}"
+fi
+if [ -n "${CONTEST_UPDATE_ENV:-}" ]; then
+    UPDATE_ENV="${CONTEST_UPDATE_ENV}"
+fi
+if [ -n "${PROC_MOUNTS_FILE_OVERRIDE:-}" ]; then
+    PROC_MOUNTS_FILE="${PROC_MOUNTS_FILE_OVERRIDE}"
+fi
+if [ -n "${CONTEST_MEDIA_ROOT_OVERRIDE:-}" ]; then
+    CONTEST_MEDIA_ROOT="${CONTEST_MEDIA_ROOT_OVERRIDE}"
+fi
 
 log() {
     local ts
@@ -35,6 +51,17 @@ download_file() {
     local dest="$2"
 
     curl --fail --silent --show-error --location "${url}" -o "${dest}"
+}
+
+install_public_key() {
+    local source="$1"
+    local destination="$2"
+
+    if [ "${CONTEST_UPDATE_SKIP_ROOT_CHECK:-0}" = "1" ]; then
+        install -m 0644 "${source}" "${destination}"
+    else
+        install -o root -g root -m 0644 "${source}" "${destination}"
+    fi
 }
 
 mount_target_rw() {
@@ -81,9 +108,6 @@ CONTEST_DIR="$(normalize_contest_dir "${CONTEST_DIR:-/contest}")"
 
 if [ -f "${CONTEST_MEDIA_ROOT}${CONTEST_DIR}/.contest-installed" ]; then
     read_install_marker "${CONTEST_MEDIA_ROOT}${CONTEST_DIR}/.contest-installed"
-elif [ -f "${CONTEST_MEDIA_ROOT}${CONTEST_DIR}/.contest-full-installed" ]; then
-    log "Full install detected. Progressive runtime updates are not enabled for this mode yet. Skipping."
-    exit 0
 else
     log "No portable install marker found. Skipping."
     exit 0
@@ -102,10 +126,43 @@ fi
 
 local_version="$(read_runtime_version "${contest_root}" 2>/dev/null || printf '%s' "${RUNTIME_VERSION:-dev}")"
 manifest_tmp="$(mktemp)"
+signature_tmp="$(mktemp)"
+signature_bin_tmp="$(mktemp)"
+next_key_tmp="$(mktemp)"
+trap 'rm -f "${manifest_tmp:-}" "${signature_tmp:-}" "${signature_bin_tmp:-}" "${next_key_tmp:-}"; mountpoint -q "${MOUNT_TMP}" 2>/dev/null && umount "${MOUNT_TMP}" || true' EXIT
+
+state_dir="$(contest_state_dir "${contest_root}")"
+current_key="${state_dir}/update-signing-current.pub"
+pending_key="${state_dir}/update-signing-pending.pub"
+provisioned_key="/usr/share/contest/keys/update-signing.pub"
+[ -n "${UPDATE_SIGNATURE_PUBKEY:-}" ] && provisioned_key="${UPDATE_SIGNATURE_PUBKEY}"
+signature_url="${UPDATE_MANIFEST_SIGNATURE_URL:-${UPDATE_MANIFEST_URL}.sig}"
+mkdir -p "${state_dir}"
 
 download_file "${UPDATE_MANIFEST_URL}" "${manifest_tmp}" || die "Cannot download manifest: ${UPDATE_MANIFEST_URL}"
+download_file "${signature_url}" "${signature_tmp}" || die "Cannot download manifest signature: ${signature_url}"
+
+if ! grep -Eq '^[A-Za-z0-9+/]+={0,2}$' "${signature_tmp}" || [ "$(wc -l < "${signature_tmp}")" -ne 1 ]; then
+    die "Manifest signature must be one base64 line"
+fi
+openssl base64 -d -A -in "${signature_tmp}" -out "${signature_bin_tmp}" 2>/dev/null || \
+    die "Manifest signature is not valid base64"
+
+trusted_key="${current_key}"
+[ -r "${trusted_key}" ] || trusted_key="${provisioned_key}"
+[ -r "${trusted_key}" ] || die "Update signing public key is unavailable: ${trusted_key}"
+
+verification_key_kind="current"
+if [ -r "${pending_key}" ] && openssl pkeyutl -verify -pubin -rawin \
+    -inkey "${pending_key}" -in "${manifest_tmp}" -sigfile "${signature_bin_tmp}" >/dev/null 2>&1; then
+    verification_key_kind="pending"
+elif ! openssl pkeyutl -verify -pubin -rawin \
+    -inkey "${trusted_key}" -in "${manifest_tmp}" -sigfile "${signature_bin_tmp}" >/dev/null 2>&1; then
+    die "Manifest signature verification failed"
+fi
 
 manifest_info="$(python3 - "${manifest_tmp}" "${UPDATE_MANIFEST_URL}" <<'PY'
+import base64
 import json, sys
 from urllib.parse import urljoin
 
@@ -116,12 +173,25 @@ with open(manifest_path, 'r', encoding='utf-8') as fh:
 print(f"VERSION\t{data.get('version', '')}")
 for name, meta in data.get('artifacts', {}).items():
     print(f"ARTIFACT\t{name}\t{urljoin(base_url, meta.get('url', ''))}\t{meta.get('sha256', '')}")
+
+next_key = data.get("next_signing_key")
+next_key_sha256 = data.get("next_signing_key_sha256")
+if (next_key is None) != (next_key_sha256 is None):
+    raise SystemExit("next signing key fields must be provided together")
+if next_key is not None:
+    encoded = base64.b64encode(next_key.encode("utf-8")).decode("ascii")
+    print(f"NEXT_KEY\t{encoded}\t{next_key_sha256}")
 PY
-)"
+)" || die "Manifest JSON is invalid"
 
 remote_version="$(printf '%s\n' "${manifest_info}" | awk -F '\t' '$1=="VERSION" {print $2; exit}')"
 if [ -z "${remote_version}" ]; then
     die "Manifest does not define version"
+fi
+
+if [ -r "${pending_key}" ] && [ "${verification_key_kind}" != "pending" ] && \
+    [ "${remote_version}" != "${local_version}" ]; then
+    die "Pending signing key is required for the next update version"
 fi
 
 if [ "${remote_version}" = "${local_version}" ]; then
@@ -134,10 +204,21 @@ if [ -z "${artifact_lines}" ]; then
     die "Manifest does not define any artifacts"
 fi
 
+next_key_line="$(printf '%s\n' "${manifest_info}" | awk -F '\t' '$1=="NEXT_KEY" {print; exit}')"
+if [ -n "${next_key_line}" ]; then
+    IFS=$'\t' read -r _kind next_key_b64 next_key_sha256 <<< "${next_key_line}"
+    printf '%s' "${next_key_b64}" | openssl base64 -d -A > "${next_key_tmp}" 2>/dev/null || \
+        die "next_signing_key is not valid base64 data"
+    [ "$(sha256sum "${next_key_tmp}" | awk '{print $1}')" = "${next_key_sha256}" ] || \
+        die "next_signing_key_sha256 mismatch"
+    openssl pkey -pubin -in "${next_key_tmp}" -text -noout 2>/dev/null | \
+        grep -q '^ED25519 Public-Key:' || \
+        die "next_signing_key is not a valid Ed25519 public key"
+fi
+
 staging_root="$(contest_staging_dir "${contest_root}")/${remote_version}"
 current_dir="$(contest_current_dir "${contest_root}")"
 previous_dir="$(contest_previous_dir "${contest_root}")"
-state_dir="$(contest_state_dir "${contest_root}")"
 mkdir -p "${staging_root}" "${state_dir}"
 
 while IFS=$'\t' read -r _kind name url sha; do
@@ -177,6 +258,15 @@ mv "${staging_root}" "${current_dir}"
 write_runtime_version "${contest_root}" "${remote_version}"
 link_runtime_files "${contest_root}"
 cp "${manifest_tmp}" "${contest_root}/manifest.json"
+cp "${signature_tmp}" "${contest_root}/manifest.json.sig"
+
+if [ "${verification_key_kind}" = "pending" ]; then
+    install_public_key "${pending_key}" "${current_key}"
+    rm -f "${pending_key}"
+fi
+if [ -n "${next_key_line}" ]; then
+    install_public_key "${next_key_tmp}" "${pending_key}"
+fi
 
 cat > "${state_dir}/last-update.json" <<EOF
 {"version":"${remote_version}","previous_version":"${local_version}","status":"applied","reboot_required":true}

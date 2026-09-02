@@ -41,26 +41,49 @@ migrate_old_partial_file() {
     fi
 }
 
+# Descarga con timeouts y reintentos. Cada herramienta se prueba con un tope de
+# tiempo de pared (timeout(1)); si falla o se cuelga, se pasa a la siguiente.
+DOWNLOAD_CONNECT_TIMEOUT="${DOWNLOAD_CONNECT_TIMEOUT:-30}"
+DOWNLOAD_WALL_TIMEOUT="${DOWNLOAD_WALL_TIMEOUT:-1800}"
+
+_with_timeout() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout --kill-after=15 "${DOWNLOAD_WALL_TIMEOUT}" "$@"
+    else
+        "$@"
+    fi
+}
+
+_curl_download() {
+    local src="$1" dst="$2"
+    _with_timeout curl -fSL --retry 3 --retry-delay 2 \
+        --connect-timeout "${DOWNLOAD_CONNECT_TIMEOUT}" -C - -o "${dst}" "${src}" && return 0
+    rm -f "${dst}"
+    _with_timeout curl -fSL --retry 3 --retry-delay 2 \
+        --connect-timeout "${DOWNLOAD_CONNECT_TIMEOUT}" -o "${dst}" "${src}"
+}
+
 download_file() {
     local src="$1"
     local dst="$2"
 
+    case "${src}" in
+        *microsoft.com*|*visualstudio.com*|*githubusercontent*|*github.com*/*releases/*|*jetbrains.com*|*download.jetbrains*)
+            _curl_download "${src}" "${dst}"
+            return $?
+            ;;
+    esac
+
     if command -v axel >/dev/null 2>&1; then
-        axel -n "${connections}" -q -o "${dst}" "${src}"
-        return 0
+        if _with_timeout axel -n "${connections}" -T "${DOWNLOAD_CONNECT_TIMEOUT}" \
+            -o "${dst}" "${src}"; then
+            return 0
+        fi
+        echo "W: axel falló/expiró, cayendo a curl..." >&2
+        rm -f "${dst}" "${dst}.st"
     fi
 
-    if command -v wget >/dev/null 2>&1; then
-        wget -q -c -O "${dst}" "${src}"
-        return 0
-    fi
-
-    if [ -f "${dst}" ]; then
-        curl -fSL -C - "${src}" -o "${dst}"
-        return 0
-    fi
-
-    curl -fSL "${src}" -o "${dst}"
+    _curl_download "${src}" "${dst}"
 }
 
 copy_from_cache() {

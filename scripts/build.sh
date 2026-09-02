@@ -11,6 +11,8 @@ source "${SCRIPT_DIR}/lib.sh"
 # shellcheck source=../config/iso.conf
 source "${PROJECT_DIR}/config/iso.conf"
 
+ISO_FLAVOR="${ISO_FLAVOR:-seed}"
+
 resolve_project_path() {
     local path="$1"
     local fallback_path="$2"
@@ -38,6 +40,7 @@ RUNTIME_DIR="${WORK_DIR}/runtime"
 ISO_STAGING_DIR="${WORK_DIR}/iso-staging"
 DOWNLOAD_CACHE_DIR="$(resolve_project_path "${DOWNLOAD_CACHE_DIR}" "${PROJECT_TMP_DIR}/download-cache")"
 APT_CACHE_DIR="$(resolve_project_path "${APT_CACHE_DIR}" "${PROJECT_TMP_DIR}/apt-cache")"
+BASE_CACHE_DIR="$(resolve_project_path "${BASE_CACHE_DIR:-${PROJECT_TMP_DIR}/base-cache}" "${PROJECT_TMP_DIR}/base-cache")"
 
 # shellcheck source=./build/lib/grub.sh
 source "${BUILD_SCRIPT_DIR}/grub.sh"
@@ -111,8 +114,78 @@ copy_setup_hooks() {
 copy_chroot_scripts() {
     copy_to_rootfs_tmp "${SCRIPT_DIR}/run-hook-dir.sh"
     copy_to_rootfs_tmp "${SCRIPT_DIR}/cached-curl.sh"
+    copy_to_rootfs_tmp "${BUILD_SCRIPT_DIR}/install-packages-chroot.sh"
     copy_to_rootfs_tmp "${BUILD_SCRIPT_DIR}/install-and-customize-chroot.sh"
     copy_to_rootfs_tmp "${BUILD_SCRIPT_DIR}/trim-chroot.sh"
+}
+
+# Clave del caché del rootfs base: cambia solo si cambia la suite/mirror/arch,
+# la lista de paquetes del perfil, o el script que los instala.
+base_cache_key() {
+    {
+        printf '%s\n' "${ARCH}" "${DEBIAN_SUITE}" "${DEBIAN_MIRROR}" \
+            "${DEBIAN_SECURITY_MIRROR}" "${DEBIAN_COMPONENTS}"
+        cat "$(desktop_packages_list)"
+        cat "${BUILD_SCRIPT_DIR}/install-packages-chroot.sh"
+    } | sha256sum | cut -c1-16
+}
+
+base_cache_file() {
+    printf '%s/base-%s-%s.tar.zst\n' \
+        "${BASE_CACHE_DIR}" "${DESKTOP_PROFILE}" "$(base_cache_key)"
+}
+
+write_chroot_apt_and_dns() {
+    cat > "${ROOTFS_DIR}/etc/apt/sources.list" <<APT
+deb ${DEBIAN_MIRROR} ${DEBIAN_SUITE} ${DEBIAN_COMPONENTS}
+deb ${DEBIAN_MIRROR} ${DEBIAN_SUITE}-updates ${DEBIAN_COMPONENTS}
+deb ${DEBIAN_SECURITY_MIRROR} ${DEBIAN_SUITE}-security ${DEBIAN_COMPONENTS}
+APT
+    cp /etc/resolv.conf "${ROOTFS_DIR}/etc/resolv.conf" 2>/dev/null || \
+        echo 'nameserver 1.1.1.1' > "${ROOTFS_DIR}/etc/resolv.conf"
+
+    rm -f "${ROOTFS_DIR}/etc/apt/apt.conf.d/01proxy"
+    if [[ -n "${APT_PROXY}" ]]; then
+        cat > "${ROOTFS_DIR}/etc/apt/apt.conf.d/01proxy" <<APT_PROXY_EOF
+Acquire::http::Proxy "${APT_PROXY}";
+Acquire::https::Proxy "DIRECT";
+APT_PROXY_EOF
+    fi
+}
+
+save_base_cache() {
+    local cache; cache="$(base_cache_file)"
+    mkdir -p "${BASE_CACHE_DIR}"
+    log "Guardando caché del rootfs base: ${cache}"
+    # --one-file-system deja fuera /dev /proc /sys /run y los bind mounts
+    # (apt-cache, download-cache). Se excluye /tmp (efímero).
+    tar --one-file-system --numeric-owner --xattrs --acls \
+        --exclude='./tmp/*' -I 'zstd -T0 -3' \
+        -C "${ROOTFS_DIR}" -cf "${cache}.partial" . || {
+        rm -f "${cache}.partial"
+        warn "No se pudo guardar el caché base (se sigue sin él)"
+        return 0
+    }
+    mv -f "${cache}.partial" "${cache}"
+    # retención: 3 tarballs más nuevos por perfil
+    ls -1t "${BASE_CACHE_DIR}"/base-"${DESKTOP_PROFILE}"-*.tar.zst 2>/dev/null \
+        | tail -n +4 | xargs -r rm -f
+}
+
+restore_base_cache() {
+    local cache; cache="$(base_cache_file)"
+    [[ "${BUILD_NO_BASE_CACHE:-0}" == "1" ]] && return 1
+    [[ -f "${cache}" ]] || return 1
+    log "Caché del rootfs base ENCONTRADO: ${cache}"
+    log "  (BUILD_NO_BASE_CACHE=1 para ignorarlo y reconstruir)"
+    mkdir -p "${ROOTFS_DIR}"
+    tar --numeric-owner --xattrs --acls -I 'zstd -d -T0' \
+        -C "${ROOTFS_DIR}" -xf "${cache}" || {
+        warn "Caché base corrupto; se reconstruye"
+        rm -rf "${ROOTFS_DIR:?}"/* "${ROOTFS_DIR:?}"/.[!.]* 2>/dev/null || true
+        return 1
+    }
+    return 0
 }
 
 copy_repo_assets() {
@@ -142,6 +215,29 @@ copy_chroot_inputs() {
     copy_repo_assets
 }
 
+stage_security_file() {
+    local source_path="$1"
+    local destination_name="$2"
+    local mode="$3"
+    local destination_dir
+
+    [[ -n "${source_path}" ]] || return 0
+    [[ "${source_path}" == /* ]] || die "Security file must use an absolute path: ${source_path}"
+    [[ -f "${source_path}" ]] || die "Security file does not exist: ${source_path}"
+    if [[ "${mode}" == "0600" && "$(stat -c %a "${source_path}")" != "600" ]]; then
+        die "Private security file must have mode 0600: ${source_path}"
+    fi
+
+    destination_dir="$(rootfs_tmp_path "contest-security")"
+    install -d -m 0700 "${destination_dir}"
+    install -m "${mode}" "${source_path}" "${destination_dir}/${destination_name}"
+}
+
+stage_security_files() {
+    rm -rf "$(rootfs_tmp_path "contest-security")"
+    stage_security_file "${UPDATE_SIGNATURE_PUBKEY_FILE}" update-signing.pub 0644
+}
+
 run_chroot_script() {
     if [[ "$#" -lt 1 ]]; then
         die "run_chroot_script expects at least a script name"
@@ -162,6 +258,7 @@ cleanup_chroot_inputs() {
            "$(rootfs_tmp_path "packages-remove.list")" \
            "$(rootfs_tmp_path "setup.d")" \
            "$(rootfs_tmp_path "assets")" \
+           "$(rootfs_tmp_path "contest-security")" \
            "$(rootfs_tmp_path "run-hook-dir.sh")" \
            "$(rootfs_tmp_path "cached-curl.sh")" \
            "$(rootfs_tmp_path "install-and-customize-chroot.sh")" \
@@ -170,7 +267,7 @@ cleanup_chroot_inputs() {
 
 phase_prepare() {
     phase "00 Prepare"
-    require_cmd debootstrap chroot mksquashfs grub-mkrescue xorriso sha256sum
+    require_cmd debootstrap chroot mksquashfs grub-mkrescue xorriso sha256sum tar zstd python3
 
     rm -rf "${WORK_DIR}"
     mkdir -p "${ROOTFS_DIR}" "${RUNTIME_DIR}" "${ISO_STAGING_DIR}" "${OUTPUT_DIR}"
@@ -187,6 +284,14 @@ phase_prepare() {
 phase_bootstrap() {
     phase "10 Bootstrap Debian (${DEBIAN_SUITE})"
 
+    if restore_base_cache; then
+        write_chroot_apt_and_dns
+        log "Rootfs base restaurado del caché — se omiten debootstrap + apt install"
+        return 0
+    fi
+
+    log "Caché del rootfs base: MISS — debootstrap + apt install (se guardará al terminar)"
+
     local debootstrap_env=()
     if [[ -n "${APT_PROXY}" ]]; then
         debootstrap_env=(env http_proxy="${APT_PROXY}")
@@ -194,21 +299,19 @@ phase_bootstrap() {
     "${debootstrap_env[@]}" debootstrap --arch="${ARCH}" --variant=minbase \
         "${DEBIAN_SUITE}" "${ROOTFS_DIR}" "${DEBIAN_MIRROR}"
 
-    cat > "${ROOTFS_DIR}/etc/apt/sources.list" <<APT
-deb ${DEBIAN_MIRROR} ${DEBIAN_SUITE} ${DEBIAN_COMPONENTS}
-deb ${DEBIAN_MIRROR} ${DEBIAN_SUITE}-updates ${DEBIAN_COMPONENTS}
-deb ${DEBIAN_SECURITY_MIRROR} ${DEBIAN_SUITE}-security ${DEBIAN_COMPONENTS}
-APT
+    write_chroot_apt_and_dns
 
-    cp /etc/resolv.conf "${ROOTFS_DIR}/etc/resolv.conf" 2>/dev/null || \
-        echo 'nameserver 1.1.1.1' > "${ROOTFS_DIR}/etc/resolv.conf"
+    # Instala los paquetes del perfil en su propia pasada de chroot para poder
+    # cachear el resultado antes de aplicar los hooks.
+    mount_chroot
+    copy_to_rootfs_tmp "$(desktop_packages_list)" "packages.list"
+    copy_to_rootfs_tmp "${BUILD_SCRIPT_DIR}/install-packages-chroot.sh"
+    run_chroot_script "install-packages-chroot.sh"
+    rm -f "$(rootfs_tmp_path "packages.list")" \
+          "$(rootfs_tmp_path "install-packages-chroot.sh")"
+    umount_chroot
 
-    if [[ -n "${APT_PROXY}" ]]; then
-        cat > "${ROOTFS_DIR}/etc/apt/apt.conf.d/01proxy" <<APT_PROXY_EOF
-Acquire::http::Proxy "${APT_PROXY}";
-Acquire::https::Proxy "DIRECT";
-APT_PROXY_EOF
-    fi
+    [[ "${BUILD_NO_BASE_CACHE:-0}" == "1" ]] || save_base_cache
 }
 
 phase_install_and_customize() {
@@ -217,6 +320,7 @@ phase_install_and_customize() {
     mount_chroot
 
     copy_chroot_inputs
+    stage_security_files
 
     run_chroot_script "install-and-customize-chroot.sh" \
         DESKTOP_PROFILE="${DESKTOP_PROFILE}" \
@@ -234,11 +338,12 @@ phase_install_and_customize() {
         META_DISTRO_ID="${META_DISTRO_ID}" \
         META_DISTRO_NAME="${META_DISTRO_NAME}" \
         META_DISTRO_VERSION="${META_DISTRO_VERSION}" \
-        FULL_INSTALL_URL="${FULL_INSTALL_URL}" \
-        FULL_INSTALL_SHA256="${FULL_INSTALL_SHA256}" \
         UPDATE_MANIFEST_URL="${UPDATE_MANIFEST_URL}" \
         UPDATE_CHECK_ON_BOOT="${UPDATE_CHECK_ON_BOOT}" \
+        UPDATE_SIGNATURE_PUBKEY="${UPDATE_SIGNATURE_PUBKEY}" \
+        UPDATE_SIGNATURE_PUBKEY_SOURCE="/tmp/contest-security/update-signing.pub" \
         RUNTIME_VERSION="${RUNTIME_VERSION}" \
+        TEAM_ID_REQUIRED="${TEAM_ID_REQUIRED}" \
         AUTH_SERVICE_URL="${AUTH_SERVICE_URL}" \
         AUTH_SERVICE_TIMEOUT="${AUTH_SERVICE_TIMEOUT}" \
         OPT_CONTEST_DIR="${OPT_CONTEST_DIR}" \
@@ -288,30 +393,46 @@ phase_pack_runtime() {
            var/cache/apt var/lib/apt/lists var/log var/tmp
 
     write_runtime_grub_entry "${runtime_target}/grub-entry.cfg"
+
+    # El árbol extraído (~10 GB) ya no se usa: el squashfs está empaquetado y las
+    # fases siguientes (ISO y publish-lan) solo leen RUNTIME_DIR.
+    # Liberarlo aquí evita quedarse sin espacio al escribir el ISO.
+    if [[ "${KEEP_ROOTFS:-0}" != "1" ]]; then
+        rm -rf "${ROOTFS_DIR}"
+        log "Rootfs extraído eliminado (KEEP_ROOTFS=1 para conservarlo)"
+    fi
 }
 
 phase_build_iso() {
     phase "50 Build Bootable ISO"
 
     local runtime_target="${RUNTIME_DIR}/${CONTEST_DIR}"
-    local date_stamp iso_name iso_file
+    local iso_name iso_file
     local kernel_source="${runtime_target}/vmlinuz"
     local initrd_source="${runtime_target}/initrd.img"
     local squashfs_source="${runtime_target}/${ROOT_SQUASH_NAME}"
+    local grub_entry_source="${runtime_target}/grub-entry.cfg"
 
-    date_stamp="$(date +%Y%m%d)"
-    iso_name="${ISO_NAME}-${date_stamp}"
+    case "${ISO_FLAVOR}" in
+        seed) ;;
+        *) die "ISO flavor desconocido: ${ISO_FLAVOR}" ;;
+    esac
+
+    iso_name="20260901222621"
     iso_file="${OUTPUT_DIR}/${iso_name}.iso"
 
     [[ -f "${kernel_source}" ]] || die "Missing runtime kernel: ${kernel_source}"
     [[ -f "${initrd_source}" ]] || die "Missing runtime initrd: ${initrd_source}"
     [[ -f "${squashfs_source}" ]] || die "Missing runtime squashfs: ${squashfs_source}"
+    [[ -f "${grub_entry_source}" ]] || die "Missing runtime grub entry: ${grub_entry_source}"
 
     rm -rf "${ISO_STAGING_DIR}"
     mkdir -p "${ISO_STAGING_DIR}/boot/grub" "${ISO_STAGING_DIR}/${CONTEST_DIR}"
 
     cp -a "${kernel_source}" "${ISO_STAGING_DIR}/${CONTEST_DIR}/vmlinuz"
     cp -a "${initrd_source}" "${ISO_STAGING_DIR}/${CONTEST_DIR}/initrd.img"
+    cp -a "${grub_entry_source}" "${ISO_STAGING_DIR}/${CONTEST_DIR}/grub-entry.cfg"
+
     # Usa un hardlink cuando ambas rutas están en el mismo sistema de archivos
     # (por ejemplo /tmp del contenedor). Esto evita duplicar la imagen squashfs
     # de más de 3 GB y previene fallos de xorriso por falta de espacio.
@@ -323,8 +444,8 @@ phase_build_iso() {
     # El GRUB del ISO es el único cargador de arranque tanto para el ISO
     # como para el disco. Busca el marcador de despliegue (.contest-installed)
     # en cualquier partición local. Si lo encuentra, arranca desde disco con
-    # persistencia. Si no, arranca desde el ISO y eso dispara deploy.sh para
-    # copiar los archivos al disco.
+    # persistencia. Si no, arranca desde el ISO y el initramfs copia los
+    # archivos al disco.
     write_iso_grub_cfg "${ISO_STAGING_DIR}/boot/grub/grub.cfg"
 
     grub-mkrescue -o "${iso_file}" "${ISO_STAGING_DIR}" >/tmp/grub-mkrescue.log 2>&1 || {
@@ -332,7 +453,9 @@ phase_build_iso() {
         die "grub-mkrescue failed"
     }
 
-    sha256sum "${iso_file}" > "${iso_file}.sha256"
+    # El manifiesto debe ser portable entre el contenedor de build y el host:
+    # solo debe contener el nombre del ISO, no la ruta `/work/...` del builder.
+    (cd "${OUTPUT_DIR}" && sha256sum "${iso_name}.iso") > "${iso_file}.sha256"
 
     # La carpeta runtime (squashfs + kernel + initrd) ya está embebida en el
     # ISO. Copiarla por separado a output/ consume otros 3+ GB en el volumen
@@ -355,65 +478,259 @@ publish_runtime_version() {
     fi
 }
 
+require_update_signing_key() {
+    local key_file="${UPDATE_SIGNING_PRIVATE_KEY_FILE:-}"
+    local resolved_key
+
+    [[ -n "${key_file}" ]] || die "UPDATE_SIGNING_PRIVATE_KEY_FILE is required for publish-update"
+    [[ "${key_file}" == /* ]] || die "Update signing private key must use an absolute path"
+    [[ -f "${key_file}" ]] || die "Update signing private key does not exist: ${key_file}"
+    [[ "$(stat -c %a "${key_file}")" == "600" ]] || \
+        die "Update signing private key must have mode 0600: ${key_file}"
+
+    resolved_key="$(readlink -f "${key_file}")"
+    case "${resolved_key}" in
+        "${PROJECT_DIR}"/*)
+            die "Update signing private key must be external to the repository"
+            ;;
+    esac
+
+    openssl pkey -in "${key_file}" -text_pub -noout 2>/dev/null | \
+        grep -q '^ED25519 Public-Key:' || \
+        die "Update signing private key must be Ed25519"
+    printf '%s\n' "${key_file}"
+}
+
+write_canonical_update_manifest() {
+    local manifest_file="$1"
+    local version="$2"
+    local vmlinuz_sha="$3"
+    local initrd_sha="$4"
+    local squashfs_sha="$5"
+    local grub_entry_sha="$6"
+    local next_key_file="${UPDATE_NEXT_SIGNING_PUBLIC_KEY_FILE:-}"
+
+    if [[ -n "${next_key_file}" ]]; then
+        [[ "${next_key_file}" == /* ]] || \
+            die "Next update signing public key must use an absolute path"
+        [[ -f "${next_key_file}" ]] || \
+            die "Next update signing public key does not exist: ${next_key_file}"
+        openssl pkey -pubin -in "${next_key_file}" -text -noout 2>/dev/null | \
+            grep -q '^ED25519 Public-Key:' || \
+            die "Next update signing public key must be Ed25519"
+    fi
+
+    python3 - "${manifest_file}" "${version}" "${ROOT_SQUASH_NAME}" \
+        "${vmlinuz_sha}" "${initrd_sha}" "${squashfs_sha}" "${grub_entry_sha}" \
+        "${next_key_file}" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+(
+    output_path,
+    version,
+    squashfs_name,
+    vmlinuz_sha,
+    initrd_sha,
+    squashfs_sha,
+    grub_entry_sha,
+    next_key_path,
+) = sys.argv[1:]
+
+manifest = {
+    "artifacts": {
+        "filesystem_squashfs": {
+            "sha256": squashfs_sha,
+            "url": f"artifacts/{version}/{squashfs_name}",
+        },
+        "grub_entry_cfg": {
+            "sha256": grub_entry_sha,
+            "url": f"artifacts/{version}/grub-entry.cfg",
+        },
+        "initrd_img": {
+            "sha256": initrd_sha,
+            "url": f"artifacts/{version}/initrd.img",
+        },
+        "vmlinuz": {
+            "sha256": vmlinuz_sha,
+            "url": f"artifacts/{version}/vmlinuz",
+        },
+    },
+    "version": version,
+}
+
+if next_key_path:
+    key_bytes = pathlib.Path(next_key_path).read_bytes()
+    try:
+        key_text = key_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SystemExit(f"next signing public key is not UTF-8: {exc}")
+    manifest["next_signing_key"] = key_text
+    manifest["next_signing_key_sha256"] = hashlib.sha256(key_bytes).hexdigest()
+
+canonical = json.dumps(
+    manifest,
+    ensure_ascii=False,
+    separators=(",", ":"),
+    sort_keys=True,
+).encode("utf-8") + b"\n"
+pathlib.Path(output_path).write_bytes(canonical)
+PY
+}
+
+publish_runtime_artifacts() {
+    local artifact_dir="$1" manifest_file="$2" version="$3"
+    local runtime_target="${RUNTIME_DIR}/${CONTEST_DIR}"
+    local f vmlinuz_sha initrd_sha squashfs_sha grub_entry_sha
+
+    for f in vmlinuz initrd.img "${ROOT_SQUASH_NAME}" grub-entry.cfg; do
+        [[ -f "${runtime_target}/${f}" ]] || die "Missing runtime artifact: ${f}"
+    done
+    mkdir -p "${artifact_dir}"
+    for f in vmlinuz initrd.img "${ROOT_SQUASH_NAME}" grub-entry.cfg; do
+        cp -a "${runtime_target}/${f}" "${artifact_dir}/${f}"
+    done
+
+    vmlinuz_sha="$(sha256sum "${artifact_dir}/vmlinuz" | awk '{print $1}')"
+    initrd_sha="$(sha256sum "${artifact_dir}/initrd.img" | awk '{print $1}')"
+    squashfs_sha="$(sha256sum "${artifact_dir}/${ROOT_SQUASH_NAME}" | awk '{print $1}')"
+    grub_entry_sha="$(sha256sum "${artifact_dir}/grub-entry.cfg" | awk '{print $1}')"
+    write_canonical_update_manifest "${manifest_file}" "${version}" \
+        "${vmlinuz_sha}" "${initrd_sha}" "${squashfs_sha}" "${grub_entry_sha}"
+}
+
 phase_publish_update() {
     phase "60 Publish Runtime Update"
 
-    local runtime_target="${RUNTIME_DIR}/${CONTEST_DIR}"
-    local version updates_root artifact_dir manifest_file
-    local kernel_source="${runtime_target}/vmlinuz"
-    local initrd_source="${runtime_target}/initrd.img"
-    local squashfs_source="${runtime_target}/${ROOT_SQUASH_NAME}"
-    local grub_entry_source="${runtime_target}/grub-entry.cfg"
-
-    [[ -f "${kernel_source}" ]] || die "Missing runtime kernel: ${kernel_source}"
-    [[ -f "${initrd_source}" ]] || die "Missing runtime initrd: ${initrd_source}"
-    [[ -f "${squashfs_source}" ]] || die "Missing runtime squashfs: ${squashfs_source}"
-    [[ -f "${grub_entry_source}" ]] || die "Missing runtime grub-entry: ${grub_entry_source}"
+    local version updates_root artifact_dir manifest_file signature_file signing_key
+    local signature_tmp
 
     updates_root="${UPDATES_DIR}"
     version="$(publish_runtime_version)"
     artifact_dir="${updates_root}/artifacts/${version}"
     manifest_file="${updates_root}/manifest.json"
+    signature_file="${manifest_file}.sig"
+    signing_key=""
+    if [[ -n "${UPDATE_SIGNING_PRIVATE_KEY_FILE:-}" ]]; then
+        require_update_signing_key >/dev/null || return 1
+        signing_key="${UPDATE_SIGNING_PRIVATE_KEY_FILE}"
+    elif [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+        die "UPDATE_SIGNING_PRIVATE_KEY_FILE is required for publish-update"
+    fi
 
-    mkdir -p "${artifact_dir}"
-    cp -a "${kernel_source}" "${artifact_dir}/vmlinuz"
-    cp -a "${initrd_source}" "${artifact_dir}/initrd.img"
-    cp -a "${squashfs_source}" "${artifact_dir}/${ROOT_SQUASH_NAME}"
-    cp -a "${grub_entry_source}" "${artifact_dir}/grub-entry.cfg"
+    publish_runtime_artifacts "${artifact_dir}" "${manifest_file}" "${version}"
 
-    local vmlinuz_sha initrd_sha squashfs_sha grub_entry_sha
-    vmlinuz_sha="$(sha256sum "${artifact_dir}/vmlinuz" | awk '{print $1}')"
-    initrd_sha="$(sha256sum "${artifact_dir}/initrd.img" | awk '{print $1}')"
-    squashfs_sha="$(sha256sum "${artifact_dir}/${ROOT_SQUASH_NAME}" | awk '{print $1}')"
-    grub_entry_sha="$(sha256sum "${artifact_dir}/grub-entry.cfg" | awk '{print $1}')"
-
-    cat > "${manifest_file}" <<EOF
-{
-  "version": "${version}",
-  "artifacts": {
-    "vmlinuz": {
-      "url": "artifacts/${version}/vmlinuz",
-      "sha256": "${vmlinuz_sha}"
-    },
-    "initrd_img": {
-      "url": "artifacts/${version}/initrd.img",
-      "sha256": "${initrd_sha}"
-    },
-    "filesystem_squashfs": {
-      "url": "artifacts/${version}/${ROOT_SQUASH_NAME}",
-      "sha256": "${squashfs_sha}"
-    },
-    "grub_entry_cfg": {
-      "url": "artifacts/${version}/grub-entry.cfg",
-      "sha256": "${grub_entry_sha}"
-    }
-  }
-}
-EOF
+    if [[ -n "${signing_key}" ]]; then
+        signature_tmp="$(mktemp)"
+        openssl pkeyutl -sign -rawin -inkey "${signing_key}" \
+            -in "${manifest_file}" -out "${signature_tmp}" || {
+            rm -f "${signature_tmp}"
+            die "Cannot sign update manifest"
+        }
+        openssl base64 -A -in "${signature_tmp}" > "${signature_file}"
+        printf '\n' >> "${signature_file}"
+        rm -f "${signature_tmp}"
+    else
+        rm -f "${signature_file}"
+    fi
 
     log "Update version: ${version}"
     log "Update dir:     ${artifact_dir}"
     log "Manifest:       ${manifest_file}"
+    if [[ -n "${signing_key}" ]]; then
+        log "Signature:      ${signature_file}"
+    fi
+}
+
+# Genera un .torrent BitTorrent v1 (bencode + SHA1 de piezas) sin dependencias
+# extra en el host: solo python3, que ya usa el build. Sin tracker (LPD/PEX).
+# Equivale a `mktorrent -l 21 -n <name> <dir>`.
+write_lan_torrent() {
+    local out="$1" name="$2" src_dir="$3"
+    python3 - "${out}" "${name}" "${src_dir}" <<'PY'
+import hashlib, os, sys
+
+out, name, src = sys.argv[1:]
+PIECE = 1 << 21  # 2 MiB, = mktorrent -l 21
+
+def bencode(v):
+    if isinstance(v, int):
+        return b"i%de" % v
+    if isinstance(v, bytes):
+        return b"%d:%s" % (len(v), v)
+    if isinstance(v, str):
+        return bencode(v.encode())
+    if isinstance(v, list):
+        return b"l" + b"".join(bencode(x) for x in v) + b"e"
+    if isinstance(v, dict):
+        return b"d" + b"".join(
+            bencode(k) + bencode(v[k]) for k in sorted(v)
+        ) + b"e"
+    raise TypeError(type(v))
+
+files = []
+for root, _dirs, names in os.walk(src):
+    for n in sorted(names):
+        full = os.path.join(root, n)
+        rel = os.path.relpath(full, src).split(os.sep)
+        files.append((rel, full, os.path.getsize(full)))
+files.sort(key=lambda f: f[0])
+
+pieces = bytearray()
+buf = bytearray()
+for _rel, full, _size in files:
+    with open(full, "rb") as fh:
+        while True:
+            chunk = fh.read(PIECE - len(buf))
+            if not chunk:
+                break
+            buf += chunk
+            if len(buf) == PIECE:
+                pieces += hashlib.sha1(bytes(buf)).digest()
+                buf = bytearray()
+if buf:
+    pieces += hashlib.sha1(bytes(buf)).digest()
+
+info = {
+    "name": name,
+    "piece length": PIECE,
+    "pieces": bytes(pieces),
+    "files": [
+        {"length": size, "path": [c.encode() for c in rel]}
+        for rel, _full, size in files
+    ],
+}
+torrent = {"info": info}
+with open(out, "wb") as fh:
+    fh.write(bencode(torrent))
+PY
+}
+
+phase_publish_lan() {
+    phase "62 Publish LAN Artifacts"
+
+    local version artifact_dir manifest_file torrent_file
+    version="$(publish_runtime_version)"
+    artifact_dir="${UPDATES_DIR}/artifacts/${version}"
+    manifest_file="${UPDATES_DIR}/manifest.json"
+    torrent_file="${UPDATES_DIR}/contest-${version}.torrent"
+
+    publish_runtime_artifacts "${artifact_dir}" "${manifest_file}" "${version}"
+    rm -f "${manifest_file}.sig"   # LAN v1 sin firma (docs/LAN-DEPLOY.md §4)
+
+    rm -f "${torrent_file}"
+    # El nombre interno coincide con el folder portable que encuentra el
+    # initramfs. Así aria2 descarga directamente al folder final, sin duplicar
+    # el squashfs ni depender del USB después de validarlo.
+    write_lan_torrent "${torrent_file}" "${CONTEST_DIR#/}" "${artifact_dir}"
+
+    LAN_MANIFEST_FILE="${manifest_file}"
+    LAN_TORRENT_FILE="${torrent_file}"
+    LAN_ARTIFACT_DIR="${artifact_dir}"
+    log "LAN manifest:  ${manifest_file}"
+    log "LAN torrent:   ${torrent_file}"
 }
 
 build_runtime() {
@@ -431,12 +748,14 @@ main() {
 
 print_usage() {
     cat <<EOF
-Usage: $(basename "$0") [full|runtime|publish-update|help]
+Usage: $(basename "$0") [seed|full|runtime|publish-update|publish-lan|help]
 
 Targets:
-  full          Build completo (default)
+  seed          ISO completa para el primer seed (default)
+  full          Alias de seed
   runtime       Construye hasta runtime/ + grub-entry.cfg
-  publish-update Construye runtime y publica artifacts + manifest en updates/
+  publish-update Construye runtime y publica artifacts + manifest FIRMADO en updates/
+  publish-lan   Publica manifest y torrent para mini-deploy (sin firma)
   help          Muestra esta ayuda
 EOF
 }
@@ -445,8 +764,11 @@ run_build_target() {
     local target="${1:-full}"
 
     case "${target}" in
-        full|all)
-            main
+        seed|full|all)
+            ISO_FLAVOR=seed main
+            ;;
+        deploy)
+            die "El build principal solo genera la ISO completa; usa start.sh build-mini para mini-deploy"
             ;;
         runtime)
             build_runtime
@@ -454,6 +776,10 @@ run_build_target() {
         publish-update|update|publish)
             build_runtime
             phase_publish_update
+            ;;
+        publish-lan)
+            build_runtime
+            phase_publish_lan
             ;;
         help|-h|--help)
             print_usage
@@ -465,5 +791,11 @@ run_build_target() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    run_build_target "${1:-full}"
+    target="${1:-full}"
+    case "${target}" in
+        publish-update|update|publish)
+            require_update_signing_key >/dev/null
+            ;;
+    esac
+    run_build_target "${target}"
 fi

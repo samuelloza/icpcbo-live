@@ -32,6 +32,8 @@ def main() -> None:
     login = {
         "username": read_optional(os.path.join(login_state_dir, "username.txt")),
         "user_id": read_optional(os.path.join(login_state_dir, "user-id.txt")),
+        "team_id": read_optional(os.path.join(login_state_dir, "team-id.txt")),
+        "team_name": read_optional(os.path.join(login_state_dir, "team-name.txt")),
     }
 
     payload = {

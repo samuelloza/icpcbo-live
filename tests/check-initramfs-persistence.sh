@@ -200,4 +200,38 @@ grep -q '/dev/sda2.*APTA' "${partition_summary}" || fail "Expected first eligibl
 grep -q '/dev/sdb1.*APTA' "${partition_summary}" || fail "Expected selected partition in summary"
 grep -q '/dev/sdc1.*SIN ESPACIO' "${partition_summary}" || fail "Expected undersized partition in summary"
 
-echo "PASS: initramfs persistence actions keep only home, clear home, and wipe persistence as expected."
+# NTFS bloqueada por Fast Startup: mensaje SHIFT + reinicio, no arranque silencioso.
+ntfs_locked_out="${tmp_dir}/ntfs-locked.out"
+CONTEST_TEST_NO_REBOOT="1"
+CONTEST_TEST_KEY_DEV="${tmp_dir}/console-input"
+printf 'x' > "${tmp_dir}/console-input"
+unset CONTEST_TEST_REBOOT_REASON
+FOUND_DEV="/dev/sda1"
+FOUND_FSTYPE="ntfs3"
+CONTEST_PERSIST="auto"
+CONTEST_INSTALL_MODE=""
+CONTEST_NTFS_FORCE="0"
+CONTEST_ERROR_HOLD="60"
+unset CONTEST_TEST_HOLD_SECONDS
+# rechaza cualquier mount con 'rw' (dirty), acepta lo demás
+mount() { case "$*" in *rw*) return 1 ;; *) mkdir -p /run/contest-media 2>/dev/null; return 0 ;; esac; }
+select_overlay_mode 2>"${ntfs_locked_out}" || true
+grep -q 'SHIFT' "${ntfs_locked_out}" || fail "NTFS bloqueada debe pedir apagado con SHIFT"
+grep -qi 'inicio rapido\|fast startup' "${ntfs_locked_out}" || fail "el mensaje debe nombrar el Inicio rapido"
+grep -q 'contest.ntfs_force=1' "${ntfs_locked_out}" || fail "el mensaje debe ofrecer contest.ntfs_force=1"
+[[ "${CONTEST_TEST_HOLD_SECONDS:-}" = "60" ]] || fail "NTFS bloqueada debe detener la pantalla 60 s"
+[[ "${CONTEST_TEST_REBOOT_REASON:-}" = "ntfs-locked" ]] || fail "NTFS bloqueada debe reiniciar tras el hold"
+unset CONTEST_TEST_REBOOT_REASON CONTEST_TEST_HOLD_SECONDS
+
+# contest.ntfs_force=1: monta rw con 'force', NO muestra el bloqueo
+ntfs_force_out="${tmp_dir}/ntfs-force.out"
+CONTEST_NTFS_FORCE="1"
+CONTEST_PERSIST="off"   # corta antes de tocar overlay.img real
+mount() { case "$*" in *force*) mkdir -p /run/contest-media 2>/dev/null; return 0 ;; *rw*) return 1 ;; *) return 0 ;; esac; }
+select_overlay_mode 2>"${ntfs_force_out}" || true
+unset -f mount
+grep -q "force" "${ntfs_force_out}" || fail "contest.ntfs_force=1 debe montar con 'force'"
+grep -q 'NTFS BLOQUEADA' "${ntfs_force_out}" && fail "con ntfs_force no debe salir el bloqueo" || true
+unset CONTEST_TEST_KEY_DEV CONTEST_TEST_NO_REBOOT CONTEST_NTFS_FORCE
+
+echo "PASS: initramfs persistence actions keep only home, clear home, wipe persistence, y avisan NTFS bloqueada."

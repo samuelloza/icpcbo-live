@@ -9,10 +9,9 @@ VSCODE_CPPT_VERSION="1.24.5"
 VSCODE_VIM_VERSION="1.32.4"
 #VSCODE_CLANGD_VERSION="0.4.0"
 VSCODE_INTELLIJ_VERSION="1.7.7"
-# La extensión de Java incluye un número de build
-# (por ejemplo 1.42.0-561).
 VSCODE_JAVA_VERSION="1.54.0"
-VSCODE_JAVA_BUILD="561"
+VSCODE_JAVA_BUILD="923"
+VSCODE_PYTHON_VERSION="2024.22.1"
 KOTLIN_LSP_API_URL="https://api.github.com/repos/Kotlin/kotlin-lsp/releases/latest"
 
 download_vsix() {
@@ -75,6 +74,7 @@ download_vsix "https://github.com/VSCodeVim/Vim/releases/download/v${VSCODE_VIM_
 download_vsix "https://github.com/kasecato/vscode-intellij-idea-keybindings/releases/download/v${VSCODE_INTELLIJ_VERSION}/intellij-idea-keybindings-${VSCODE_INTELLIJ_VERSION}.vsix" "${CACHE_DIR}/intellij.vsix" || true
 #download_vsix "https://github.com/clangd/vscode-clangd/releases/download/${VSCODE_CLANGD_VERSION}/vscode-clangd-${VSCODE_CLANGD_VERSION}.vsix" "${CACHE_DIR}/clangd.vsix" || true
 download_vsix "https://github.com/redhat-developer/vscode-java/releases/download/v${VSCODE_JAVA_VERSION}/vscode-java-${VSCODE_JAVA_VERSION}-${VSCODE_JAVA_BUILD}.vsix" "${CACHE_DIR}/java.vsix" || true
+download_vsix "https://open-vsx.org/api/ms-python/python/${VSCODE_PYTHON_VERSION}/file/ms-python.python-${VSCODE_PYTHON_VERSION}.vsix" "${CACHE_DIR}/python.vsix" || true
 download_kotlin_lsp_vsix || true
 
 chown -R "${DEFAULT_USER_VAL}:${DEFAULT_USER_VAL}" "${CACHE_DIR}"

@@ -8,23 +8,12 @@ WALLPAPER="${OPT_DIR}/misc/desktop-wallpaper.svg"
 user_home="$(getent passwd "${DEFAULT_USER_VAL}" | cut -d: -f6)"
 
 mkdir -p \
-    /etc/skel/.config/Code/User \
+    /etc/skel/.config \
     /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml \
     /etc/skel/Desktop \
     /etc/xdg/autostart \
-    "${user_home}/.config/Code/User" \
     "${user_home}/.config/xfce4/xfconf/xfce-perchannel-xml" \
     "${user_home}/Desktop"
-
-cat > /etc/skel/.config/Code/User/settings.json <<'EOM'
-{
-    "C_Cpp.default.cppStandard": "gnu++20",
-    "editor.fontSize": 14,
-    "editor.tabSize": 4,
-    "editor.insertSpaces": true,
-    "terminal.integrated.fontSize": 13
-}
-EOM
 
 cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml <<'EOF_XML'
 <?xml version="1.0" encoding="UTF-8"?>

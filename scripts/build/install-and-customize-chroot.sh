@@ -1,35 +1,9 @@
 #!/usr/bin/env bash
-
+# Personalización del rootfs: hooks de setup.d + usuario por defecto + skel.
+# La instalación de paquetes se hace antes, en install-packages-chroot.sh (fase
+# cacheable). build.sh garantiza que los paquetes ya están en el rootfs cuando
+# se llega aquí (recién instalados o restaurados del tarball base).
 set -euo pipefail
-
-apt-get update
-
-add_package_if_available() {
-    local pkg="$1"
-    local candidate
-
-    candidate="$(apt-cache policy "${pkg}" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
-    if [ -n "${candidate}" ] && [ "${candidate}" != "(none)" ]; then
-        PKGS+=("${pkg}")
-        return 0
-    fi
-
-    echo "W: package not found in repo, skipping: ${pkg}" >&2
-}
-
-PKGS=()
-while IFS= read -r pkg; do
-    case "${pkg}" in
-        ""|\#*)
-            continue
-            ;;
-    esac
-    add_package_if_available "${pkg}"
-done < /tmp/packages.list
-
-if [ "${#PKGS[@]}" -gt 0 ]; then
-    apt-get install -y "${PKGS[@]}"
-fi
 
 /tmp/run-hook-dir.sh /tmp/setup.d
 

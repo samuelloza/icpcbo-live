@@ -49,7 +49,6 @@ copy_setup_hooks
 assert_file "${ROOTFS_DIR}/tmp/setup.d/01-base-cleanup.sh"
 assert_file "${ROOTFS_DIR}/tmp/setup.d/03-default-user.sh"
 assert_file "${ROOTFS_DIR}/tmp/setup.d/05-desktop-defaults.sh"
-assert_file "${ROOTFS_DIR}/tmp/setup.d/09-full-install-bootstrap-config.sh"
 assert_file "${ROOTFS_DIR}/tmp/setup.d/12-gnome-extensions.sh"
 assert_file "${ROOTFS_DIR}/tmp/setup.d/14-gnome-defaults.sh"
 assert_file "${ROOTFS_DIR}/tmp/setup.d/15-user-env.sh"
@@ -77,12 +76,33 @@ ROOTFS_DIR="${tmp_dir}/rootfs"
 copy_chroot_scripts
 assert_file "${ROOTFS_DIR}/tmp/run-hook-dir.sh"
 assert_file "${ROOTFS_DIR}/tmp/cached-curl.sh"
+assert_file "${ROOTFS_DIR}/tmp/install-packages-chroot.sh"
 assert_file "${ROOTFS_DIR}/tmp/install-and-customize-chroot.sh"
 assert_file "${ROOTFS_DIR}/tmp/trim-chroot.sh"
 assert_executable "${ROOTFS_DIR}/tmp/run-hook-dir.sh"
 assert_executable "${ROOTFS_DIR}/tmp/cached-curl.sh"
+assert_executable "${ROOTFS_DIR}/tmp/install-packages-chroot.sh"
 assert_executable "${ROOTFS_DIR}/tmp/install-and-customize-chroot.sh"
 assert_executable "${ROOTFS_DIR}/tmp/trim-chroot.sh"
+
+# El caché del rootfs base: clave estable, específica por perfil, y sensible a
+# packages.list (para no servir un rootfs viejo cuando cambian los paquetes).
+DESKTOP_PROFILE=gnome
+key_a="$(base_cache_key)"; key_b="$(base_cache_key)"
+[[ "${key_a}" == "${key_b}" ]] || fail "base_cache_key no es determinista"
+DESKTOP_PROFILE=xfce4
+[[ "$(base_cache_key)" != "${key_a}" ]] || fail "base_cache_key no distingue perfil"
+DESKTOP_PROFILE=gnome
+case "$(base_cache_file)" in
+    */base-gnome-"${key_a}".tar.zst) ;;
+    *) fail "base_cache_file mal formado: $(base_cache_file)" ;;
+esac
+pl="$(desktop_packages_list)"
+pl_bak="$(mktemp)"; cp "${pl}" "${pl_bak}"
+printf '\n# cache-key probe\n' >> "${pl}"
+key_changed="$(base_cache_key)"
+cp "${pl_bak}" "${pl}"; rm -f "${pl_bak}"
+[[ "${key_changed}" != "${key_a}" ]] || fail "base_cache_key ignora cambios en packages.list"
 
 cache_test_url="https://example.test/downloads/tool.tar.gz"
 cache_test_hash="$(printf '%s' "${cache_test_url}" | sha256sum | cut -c1-16)"
@@ -113,9 +133,17 @@ grep -q '! -name download-cache' "${PROJECT_DIR}/scripts/build/trim-chroot.sh" |
 
 grep -q 'Acquire::https::Proxy "DIRECT"' "${PROJECT_DIR}/scripts/build.sh" || \
     fail "apt HTTPS repositories must bypass apt-cacher-ng CONNECT proxy"
+grep -q 'seed|full|all' "${PROJECT_DIR}/scripts/build.sh" || \
+    fail "build.sh debe soportar la ISO seed"
+grep -q 'ISO_FLAVOR' "${PROJECT_DIR}/scripts/build.sh" || \
+    fail "build.sh debe separar el contenido de seed/deploy"
 if grep -q 'https_proxy="${APT_PROXY}"' "${PROJECT_DIR}/scripts/build.sh"; then
     fail "debootstrap must not export apt-cacher-ng as https_proxy"
 fi
+grep -q 'cd "${OUTPUT_DIR}" && sha256sum' "${PROJECT_DIR}/scripts/build.sh" || \
+    fail "el checksum de la ISO debe usar una ruta portable"
+grep -q 'iso_name="20260901222621"' "${PROJECT_DIR}/scripts/build.sh" || \
+    fail "la ISO seed debe usar el nombre fijo solicitado"
 
 OUTPUT_DIR="${tmp_dir}/output"
 stub_bin_dir="${tmp_dir}/bin"
@@ -177,9 +205,9 @@ phase_trim() { echo "phase_trim" >> "${phase_log}"; }
 phase_pack_runtime() { echo "phase_pack_runtime" >> "${phase_log}"; }
 phase_build_iso() { echo "phase_build_iso" >> "${phase_log}"; }
 phase_publish_update() { echo "phase_publish_update" >> "${phase_log}"; }
+phase_publish_lan() { echo "phase_publish_lan" >> "${phase_log}"; }
 
 main
-
 assert_equals "$(cat <<'EOF'
 phase_prepare
 phase_bootstrap
@@ -188,7 +216,7 @@ phase_trim
 phase_pack_runtime
 phase_build_iso
 EOF
-)" "$(cat "${phase_log}")" "main phase order"
+)" "$(cat "${phase_log}")" "main phase order (sin LAN)"
 
 build_runtime() { echo "build_runtime" >> "${target_log}"; }
 main() { echo "main" >> "${target_log}"; }
@@ -227,5 +255,9 @@ assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/vmlinuz"
 assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/initrd.img"
 assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/${ROOT_SQUASH_NAME}"
 assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/grub-entry.cfg"
+
+phase_publish_lan
+
+assert_file "${UPDATES_DIR}/contest-${RUNTIME_VERSION}.torrent"
 
 echo "PASS: build.sh preserves helper staging and phase orchestration order."

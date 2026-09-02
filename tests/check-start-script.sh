@@ -27,6 +27,15 @@ trap 'rm -rf "${tmp_dir}"' EXIT
 # shellcheck source=/dev/null
 source "${PROJECT_DIR}/start.sh"
 
+[[ "$(grep -Fc -- '--autoconsole none' "${PROJECT_DIR}/start.sh")" -eq 3 ]] || \
+    fail "las VMs deben dejar disponible la UI gráfica"
+grep -q 'virt-viewer --connect qemu:///system' "${PROJECT_DIR}/start.sh" || \
+    fail "el launcher debe abrir la UI de la VM"
+grep -q 'setfacl -m u:libvirt-qemu:rw /dev/kvm' "${PROJECT_DIR}/start.sh" || \
+    fail "el launcher debe permitir que libvirt-qemu use KVM"
+grep -q 'build-seed' "${PROJECT_DIR}/start.sh" || fail "falta build seed en start.sh"
+grep -q 'build-deploy' "${PROJECT_DIR}/start.sh" || fail "falta build deploy en start.sh"
+
 OUTPUT_DIR="${tmp_dir}/output"
 mkdir -p "${OUTPUT_DIR}"
 touch "${OUTPUT_DIR}/older.iso"
@@ -38,8 +47,11 @@ assert_equals "${OUTPUT_DIR}/latest.iso" "$(latest_iso_path "${OUTPUT_DIR}")" "l
 action_log="${tmp_dir}/start-actions.log"
 
 build_target() { echo "build:$1:${2:-}" >> "${action_log}"; }
+build_mini_deploy() { echo "build:mini-deploy" >> "${action_log}"; }
 launch_vm() { echo "launch:$1" >> "${action_log}"; }
+launch_mini_existing_disk() { echo "launch-mini-existing:$1" >> "${action_log}"; }
 launch_winxp() { echo "winxp:$1:$2" >> "${action_log}"; }
+show_built_iso() { :; }
 start_interactive_menu() { echo "menu" >> "${action_log}"; }
 start_usage() { echo "help" >> "${action_log}"; }
 
@@ -48,16 +60,27 @@ require_iso() { echo "require:$1" >> "${action_log}"; }
 ISO_PATH=""
 
 run_start_action run
-run_start_action build-gnome
-run_start_action build-xfce
+run_start_action run-vm
+run_start_action build-seed
+run_start_action build-deploy
+run_start_action build-mini
+run_start_action run-mini
 run_start_action menu
 run_start_action help
 
 assert_equals "$(cat <<EOF
 require:/tmp/any.iso
 winxp:1:/tmp/any.iso
-build:full:gnome
-build:full:xfce4
+require:/tmp/any.iso
+launch:/tmp/any.iso
+build:seed:gnome
+require:/tmp/any.iso
+launch:/tmp/any.iso
+build:mini-deploy
+require:${PROJECT_DIR}/mini-deploy/output/mini-deploy.iso
+launch:${PROJECT_DIR}/mini-deploy/output/mini-deploy.iso
+build:mini-deploy
+launch-mini-existing:${PROJECT_DIR}/mini-deploy/output/mini-deploy.iso
 menu
 help
 EOF

@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     initramfs-tools \
     kmod \
     mtools \
+    python3 \
     rsync \
     squashfs-tools \
     systemd-sysv \

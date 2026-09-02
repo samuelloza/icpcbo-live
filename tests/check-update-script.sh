@@ -37,9 +37,15 @@ update_env="${tmp_dir}/update.env"
 proc_mounts="${tmp_dir}/mounts"
 cmdline_file="${tmp_dir}/cmdline"
 manifest_file="${tmp_dir}/manifest.json"
+signature_file="${manifest_file}.sig"
 artifacts_dir="${tmp_dir}/artifacts"
+private_key="${tmp_dir}/update-private.pem"
+public_key="${tmp_dir}/update-public.pem"
 
 mkdir -p "${media_root}${contest_dir}" "${target_root}${contest_dir}/current" "${target_root}${contest_dir}/state" "${artifacts_dir}" "${bin_dir}"
+openssl genpkey -algorithm Ed25519 -out "${private_key}" >/dev/null 2>&1
+chmod 0600 "${private_key}"
+openssl pkey -in "${private_key}" -pubout -out "${public_key}" >/dev/null 2>&1
 
 printf 'contest_dir=%s\n' "${contest_dir}" > "${cmdline_file}"
 printf 'tmpfs %s tmpfs rw 0 0\n' "${media_root}" > "${proc_mounts}"
@@ -85,9 +91,17 @@ cat > "${manifest_file}" <<EOF
 }
 EOF
 
+signature_bin="${tmp_dir}/manifest.sig.bin"
+openssl pkeyutl -sign -rawin \
+    -inkey "${private_key}" \
+    -in "${manifest_file}" -out "${signature_bin}"
+openssl base64 -A -in "${signature_bin}" > "${signature_file}"
+printf '\n' >> "${signature_file}"
+
 cat > "${update_env}" <<EOF
 UPDATE_MANIFEST_URL=file://${manifest_file}
 UPDATE_CHECK_ON_BOOT=true
+UPDATE_SIGNATURE_PUBKEY=${public_key}
 RUNTIME_VERSION=1
 EOF
 
@@ -121,7 +135,7 @@ CONTEST_UPDATE_MOUNT_TMP="${mounted_root}" \
 CONTEST_UPDATE_SKIP_ROOT_CHECK=1 \
 PROC_MOUNTS_FILE="${proc_mounts}" \
 CMDLINE_FILE="${cmdline_file}" \
-CONTEST_MEDIA_ROOT="${media_root}" \
+CONTEST_MEDIA_ROOT_OVERRIDE="${media_root}" \
 bash "${UPDATE_SCRIPT}"
 
 assert_file "${target_root}${contest_dir}/current/vmlinuz"
@@ -131,6 +145,7 @@ assert_contains 'old-kernel' "$(<"${target_root}${contest_dir}/previous/vmlinuz"
 assert_contains '2' "$(<"${target_root}${contest_dir}/VERSION")" "top-level version"
 assert_contains '2' "$(<"${target_root}${contest_dir}/current/VERSION")" "current version"
 assert_file "${target_root}${contest_dir}/manifest.json"
+assert_file "${target_root}${contest_dir}/manifest.json.sig"
 assert_file "${target_root}${contest_dir}/state/last-update.json"
 assert_contains 'reboot_required' "$(<"${target_root}${contest_dir}/state/last-update.json")" "update state"
 

@@ -91,6 +91,9 @@ parse_contest_cmdline() {
     CONTEST_RESET_HOME="0"
     CONTEST_RESET_PERSIST="0"
     CONTEST_BOOT_SOURCE="auto"
+    CONTEST_MEDIA_UUID=""
+    CONTEST_NTFS_FORCE="0"
+    CONTEST_ERROR_HOLD="60"
     CONTEST_MIN_RAM_MB=""
 
     for arg in $(cat /proc/cmdline); do
@@ -105,6 +108,9 @@ parse_contest_cmdline() {
             contest.reset_home=*)   CONTEST_RESET_HOME="${arg#contest.reset_home=}" ;;
             contest.reset_persist=*) CONTEST_RESET_PERSIST="${arg#contest.reset_persist=}" ;;
             contest.boot_source=*)  CONTEST_BOOT_SOURCE="${arg#contest.boot_source=}" ;;
+            contest.media_uuid=*)  CONTEST_MEDIA_UUID="${arg#contest.media_uuid=}" ;;
+            contest.ntfs_force=*)   CONTEST_NTFS_FORCE="${arg#contest.ntfs_force=}" ;;
+            contest.error_hold=*)   CONTEST_ERROR_HOLD="${arg#contest.error_hold=}" ;;
             contest_min_ram_mb=*)   CONTEST_MIN_RAM_MB="${arg#contest_min_ram_mb=}" ;;
         esac
     done
@@ -136,6 +142,48 @@ force_reboot() {
     echo b > /proc/sysrq-trigger 2>/dev/null || true
 }
 
+# Detiene la pantalla en un error para que los encargados lean el mensaje:
+# cuenta atras visible (default 60 s, contest.error_hold= lo ajusta; 0 = espera
+# indefinida solo por ENTER). ENTER en cualquier momento la corta.
+hold_for_operator() {
+    local seconds="${1:-${CONTEST_ERROR_HOLD:-60}}"
+    local key_dev="${CONTEST_TEST_KEY_DEV:-/dev/console}"
+    local old_state=""
+
+    [ -z "${CONTEST_TEST_KEY_DEV:-}" ] && [ -r /dev/tty ] && key_dev="/dev/tty"
+
+    if [ "${CONTEST_TEST_NO_REBOOT:-0}" = "1" ]; then
+        CONTEST_TEST_HOLD_SECONDS="${seconds}"
+        export CONTEST_TEST_HOLD_SECONDS
+        return 0
+    fi
+
+    if command -v stty >/dev/null 2>&1; then
+        old_state="$(stty -g < "${key_dev}" 2>/dev/null || true)"
+        [ -n "${old_state}" ] && stty -echo -icanon min 0 time 10 < "${key_dev}" 2>/dev/null || true
+    fi
+
+    if [ "${seconds}" = "0" ]; then
+        echo "  Presiona ENTER para continuar..." >&2
+        while :; do
+            IFS= read -r _ < "${key_dev}" 2>/dev/null && break
+        done
+    else
+        local remaining="${seconds}"
+        while [ "${remaining}" -gt 0 ]; do
+            printf '\r  Esta pantalla continua en %3d s   [ENTER] = continuar ahora ' \
+                "${remaining}" >&2
+            if IFS= read -r _ < "${key_dev}" 2>/dev/null; then
+                break
+            fi
+            remaining=$((remaining - 1))
+        done
+        printf '\r%*s\r' 60 '' >&2
+    fi
+
+    [ -n "${old_state}" ] && stty "${old_state}" < "${key_dev}" 2>/dev/null || true
+}
+
 stop_for_debug() {
     local reason="${1:-boot-error}"
 
@@ -145,18 +193,16 @@ stop_for_debug() {
         return 0
     fi
 
-    echo "" >&2
-    echo "  No se reiniciara automaticamente." >&2
-    echo "" >&2
+    hold_for_operator
 
-    # initramfs-tools puede reiniciar o apagar si recibió panic= en el
-    panic=""
-    panic "${reason}"
-
-    # detenida en vez de continuar con un estado incompleto o reiniciarla.
-    while :; do
-        sleep 3600
-    done
+    # Tras la cuenta atras (o ENTER) se reinicia para reintentar el arranque.
+    # contest.error_hold=0 deja la pantalla detenida sin reiniciar.
+    if [ "${CONTEST_ERROR_HOLD:-60}" = "0" ]; then
+        panic=""
+        panic "${reason}"
+        while :; do sleep 3600; done
+    fi
+    force_reboot "error"
 }
 
 wait_for_reboot_key() {
@@ -325,6 +371,15 @@ portable_install_present_at() {
     [ -f "${install_root}/${CONTEST_ROOT}" ] || return 1
 }
 
+portable_install_verified_at() {
+    local mount_root="$1"
+    local install_root="${mount_root}${CONTEST_DIR}"
+
+    portable_install_present_at "${mount_root}" || return 1
+    [ -f "${install_root}/SHA256SUMS" ] || return 1
+    (cd "${install_root}" && sha256sum -c --status SHA256SUMS) 2>/dev/null
+}
+
 remove_portable_install_at() {
     local mount_root="$1"
     local install_root="${mount_root}${CONTEST_DIR}"
@@ -436,6 +491,21 @@ find_contest_media() {
     done
 
     _log "Buscando medio con sistema contest..."
+
+    if [ -n "${CONTEST_MEDIA_UUID}" ]; then
+        dev="/dev/disk/by-uuid/${CONTEST_MEDIA_UUID}"
+        [ -e "${dev}" ] || { _log "No se encontró el UUID solicitado: ${CONTEST_MEDIA_UUID}"; return 1; }
+        real="$(readlink -f "${dev}" 2>/dev/null || echo "${dev}")"
+        for fstype in iso9660 ext4 ext3 ext2 xfs vfat exfat ntfs3; do
+            if probe_media_with_fstype "${real}" "${fstype}"; then
+                _log "Medio solicitado encontrado: ${real} (${fstype})"
+                rm -f "${candidates}"
+                return 0
+            fi
+        done
+        rm -f "${candidates}"
+        return 1
+    fi
 
     if [ "${CONTEST_BOOT_SOURCE}" = "iso" ]; then
         while read -r dev; do
@@ -616,10 +686,8 @@ find_existing_install() {
         for fstype in ext4 xfs ext3 ntfs3 ntfs vfat exfat; do
             if mount -t "${fstype}" -o "$(mount_opts_for_initramfs_fstype "${fstype}" ro)" "${real}" /run/contest-existing-scan 2>/dev/null; then
                 marker_root="/run/contest-existing-scan${CONTEST_DIR}"
-                if { [ -f "${marker_root}/.contest-installed" ] || [ -f "${marker_root}/vmlinuz" ]; } && \
-                   [ -f "${marker_root}/vmlinuz" ] && \
-                   [ -f "${marker_root}/initrd.img" ] && \
-                   [ -f "${marker_root}/${CONTEST_ROOT}" ]; then
+                if [ -f "${marker_root}/.contest-installed" ] && \
+                   portable_install_verified_at /run/contest-existing-scan; then
                     umount /run/contest-existing-scan 2>/dev/null || true
                     rmdir /run/contest-existing-scan 2>/dev/null || true
                     FOUND_DEV="${real}"
@@ -736,9 +804,8 @@ handle_install_cleanup_request() {
 auto_install_to_disk() {
     [ "${FOUND_FSTYPE}" = "iso9660" ] || return 0
 
-    # full-install.sh (userspace) maneja la instalacion completa.
     case "${CONTEST_INSTALL_MODE}" in
-        full|live) return 0 ;;
+        live) return 0 ;;
     esac
 
     if [ "${CONTEST_REINSTALL}" = "1" ]; then
@@ -902,8 +969,36 @@ auto_install_to_disk() {
     return 0
 }
 
+ntfs_locked_message_and_reboot() {
+    echo "" >&2
+    echo "===================================================" >&2
+    echo "  NO SE PUEDE GUARDAR EN EL DISCO (NTFS BLOQUEADA)" >&2
+    echo "" >&2
+    echo "  La particion de Windows quedo bloqueada por el" >&2
+    echo "  'Inicio rapido' (Fast Startup) o por hibernacion." >&2
+    echo "  Sin acceso de escritura no hay persistencia." >&2
+    echo "" >&2
+    echo "  COMO SOLUCIONARLO (en Windows):" >&2
+    echo "   1. Arranca Windows normalmente e inicia sesion." >&2
+    echo "   2. Menu Inicio -> Apagar:  MANTEN PRESIONADO  [SHIFT]" >&2
+    echo "      y haz clic en  'Apagar'  (apagado COMPLETO)." >&2
+    echo "      NO uses 'Reiniciar' ni cerrar la tapa." >&2
+    echo "   3. Vuelve a encender con este USB puesto." >&2
+    echo "" >&2
+    echo "  Alternativa (CMD como administrador):  powercfg /h off" >&2
+    echo "" >&2
+    echo "  Solo para pruebas / disco sacrificable: en el arranque," >&2
+    echo "  tecla 'e' en GRUB y agrega  contest.ntfs_force=1  a la" >&2
+    echo "  linea 'linux' (puede corromper un Windows hibernado)." >&2
+    echo "===================================================" >&2
+    echo "" >&2
+    hold_for_operator
+    force_reboot "ntfs-locked"
+}
+
 select_overlay_mode() {
     MEDIA_RW=0
+    NTFS_LOCKED=0
     local mnt_rw="rw" mnt_ro="ro"
     case "${FOUND_FSTYPE}" in
         iso9660)
@@ -921,9 +1016,14 @@ select_overlay_mode() {
             if mount -t "${FOUND_FSTYPE}" -o "${mnt_rw}" "${FOUND_DEV}" /run/contest-media 2>/dev/null; then
                 MEDIA_RW=1
                 _log "Medio montado lectura/escritura"
+            elif [ "${CONTEST_NTFS_FORCE:-0}" = "1" ] && \
+                 mount -t "${FOUND_FSTYPE}" -o "${mnt_rw},force" "${FOUND_DEV}" /run/contest-media 2>/dev/null; then
+                MEDIA_RW=1
+                _log "Medio montado lectura/escritura con 'force' (bit dirty ignorado - contest.ntfs_force=1)"
             elif mount -t "${FOUND_FSTYPE}" -o "${mnt_ro}" "${FOUND_DEV}" /run/contest-media 2>/dev/null; then
                 MEDIA_RW=0
-                _log "Medio montado solo lectura"
+                NTFS_LOCKED=1
+                _log "Medio montado solo lectura (NTFS bloqueada: Inicio rapido / hibernacion de Windows)"
             else
                 panic "No se pudo montar ${FOUND_DEV}"
             fi
@@ -945,14 +1045,20 @@ select_overlay_mode() {
     case "${CONTEST_PERSIST}" in
         off|false|no|0)
             [ "${MEDIA_RW}" = "1" ] && mount -o remount,ro /run/contest-media 2>/dev/null || true
-            case "${CONTEST_INSTALL_MODE}" in
-                full) _log "Modo instalacion completa - tmpfs temporal para arranque (full-install.sh instalara al disco)" ;;
-                *)    _log "Sin persistencia - sesion temporal en tmpfs" ;;
-            esac
+            _log "Sin persistencia - sesion temporal en tmpfs"
             _use_tmpfs_overlay
             return 0
             ;;
     esac
+
+    # NTFS montada solo lectura por Fast Startup: sin escritura no hay overlay.img
+    # ni persistencia. Avisar y reiniciar (apagado COMPLETO de Windows con SHIFT
+    # limpia el bloqueo). La entrada de GRUB "Probar live" (contest_persist=off)
+    # arranca en RAM sin este aviso.
+    if [ "${NTFS_LOCKED}" = "1" ]; then
+        ntfs_locked_message_and_reboot
+        return 0
+    fi
 
     OVERLAY_IMG="/run/contest-media${CONTEST_DIR}/overlay.img"
     if [ "${MEDIA_RW}" = "1" ] && [ -f "${OVERLAY_IMG}" ]; then

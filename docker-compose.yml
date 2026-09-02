@@ -8,14 +8,12 @@ services:
     volumes:
       - ./tmp/apt-cacher/cache:/var/cache/apt-cacher-ng
       - ./tmp/apt-cacher/logs:/var/log/apt-cacher-ng
+      - ./docker/apt-cacher-ng/20-ipv4.conf:/etc/apt-cacher-ng/20-ipv4.conf:ro
     restart: unless-stopped
 
   iso-local-conf-viewer:
     image: python:3-alpine
-    # Sirve el bootstrap remoto, el instalador full y el canal de updates:
-    # - /remote/full-install-bootstrap.sh
-    # - /remote/full-install.sh
-    # - /updates/manifest.json
+    # Sirve el canal de updates.
     command: python3 -m http.server 8081 --directory /work
     ports:
       - "8081:8081"

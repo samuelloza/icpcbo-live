@@ -1,0 +1,14 @@
+# Copy to config/iso.local.conf for a deployment. The destination is ignored by
+# Git. Keep private keys outside the repository and reference them by path.
+
+FULL_INSTALL_URL="https://updates.example.invalid/full-install-bootstrap.sh"
+FULL_INSTALL_SHA256="<64 lowercase hexadecimal characters>"
+FULL_INSTALL_PAYLOAD_SHA256="<64 lowercase hexadecimal characters>"
+UPDATE_MANIFEST_URL="https://updates.example.invalid/manifest.json"
+UPDATE_CHECK_ON_BOOT="true"
+UPDATE_SIGNATURE_PUBKEY_FILE="/secure/public/update-signing.pub"
+
+GRUB_ADMIN_PASSWORD_HASH="<grub.pbkdf2.sha512...>"
+
+# Used only by the release host. It must be an external root-owned 0600 file.
+UPDATE_SIGNING_PRIVATE_KEY_FILE="/secure/offline/update-signing.pem"
