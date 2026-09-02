@@ -290,13 +290,14 @@ show_built_iso() {
 
 start_usage() {
     cat <<EOF
-Uso: $(basename "$0") [menu|run-vm|run|build-seed|create-disk|help]
+Uso: $(basename "$0") [menu|run-vm|run|build-seed|publish-update|create-disk|help]
 
 Acciones:
   menu            abre el menú interactivo
   run-vm          arranca el ISO más nuevo en una VM Debian limpia (borra el disco lab)
   run             arranca el ISO junto a la VM Windows XP (borra el disco lab, no el de Windows)
   build-seed      construye el ISO seed GNOME y lo inicia en una VM limpia
+  publish-update  construye y publica runtime, manifest y torrent en tmp/updates/
   create-disk     crea el disco NTFS lab (se usa para probar una imagen de windows xp)
   help            muestra esta ayuda
 EOF
@@ -326,6 +327,9 @@ run_start_action() {
             require_iso "${selected_iso}"
             launch_vm "${selected_iso}"
             ;;
+        publish-update)
+            build_target publish-update
+            ;;
         create-disk)
             create_lab_disk "${LAB_DISK_PATH}" 15
             ;;
@@ -352,8 +356,9 @@ start_interactive_menu() {
 ========================================
 1) Probar ISO en VM limpia (Debian, borra el disco lab)
 2) Generar e iniciar ISO Seed en VM limpia
-3) Crear disco NTFS lab
-4) Probar ISO junto a Windows XP (borra el disco lab, NO el de Windows)
+3) Publicar runtime, manifest y torrent
+4) Crear disco NTFS lab
+5) Probar ISO junto a Windows XP (borra el disco lab, NO el de Windows)
 0) Salir
 
   (KEEP_LAB_DISK=1 conserva el disco lab para probar persistencia)
@@ -365,12 +370,13 @@ EOF
         case "${option}" in
             1) run_start_action run-vm; return 0 ;;
             2) run_start_action build-seed; return 0 ;;
-            3)
+            3) run_start_action publish-update; return 0 ;;
+            4)
                 run_start_action create-disk
                 echo
                 read -r -p "Presiona Enter para volver al menú..." _
                 ;;
-            4) run_start_action run; return 0 ;;
+            5) run_start_action run; return 0 ;;
             0) return 0 ;;
             *)
                 echo "Opción inválida."

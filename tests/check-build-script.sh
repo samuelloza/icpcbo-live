@@ -254,5 +254,7 @@ assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/vmlinuz"
 assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/initrd.img"
 assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/${ROOT_SQUASH_NAME}"
 assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/grub-entry.cfg"
+assert_file "${UPDATES_DIR}/contest-${RUNTIME_VERSION}.torrent"
+assert_not_file "${UPDATES_DIR}/manifest.json.sig"
 
 echo "PASS: build.sh preserves helper staging and phase orchestration order."

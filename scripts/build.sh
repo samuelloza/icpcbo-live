@@ -601,10 +601,72 @@ publish_runtime_artifacts() {
         "${vmlinuz_sha}" "${initrd_sha}" "${squashfs_sha}" "${grub_entry_sha}"
 }
 
+# Generates a dependency-free BitTorrent v1
+write_runtime_torrent() {
+    local output_file="$1" source_dir="$2"
+
+    python3 - "${output_file}" "${CONTEST_DIR#/}" "${source_dir}" <<'PY'
+import hashlib
+import os
+import sys
+
+output, name, source = sys.argv[1:]
+piece_length = 1 << 21
+
+def bencode(value):
+    if isinstance(value, int):
+        return b"i%de" % value
+    if isinstance(value, bytes):
+        return str(len(value)).encode() + b":" + value
+    if isinstance(value, str):
+        return bencode(value.encode())
+    if isinstance(value, list):
+        return b"l" + b"".join(bencode(item) for item in value) + b"e"
+    if isinstance(value, dict):
+        return b"d" + b"".join(
+            bencode(key) + bencode(value[key]) for key in sorted(value)
+        ) + b"e"
+    raise TypeError(type(value))
+
+files = []
+for root, _dirs, names in os.walk(source):
+    for filename in sorted(names):
+        path = os.path.join(root, filename)
+        relative = os.path.relpath(path, source).split(os.sep)
+        files.append((relative, path, os.path.getsize(path)))
+files.sort(key=lambda item: item[0])
+
+pieces = bytearray()
+buffer = bytearray()
+for _relative, path, _size in files:
+    with open(path, "rb") as file:
+        while chunk := file.read(piece_length - len(buffer)):
+            buffer += chunk
+            if len(buffer) == piece_length:
+                pieces += hashlib.sha1(buffer).digest()
+                buffer.clear()
+if buffer:
+    pieces += hashlib.sha1(buffer).digest()
+
+torrent = {"info": {
+    "files": [
+        {"length": size, "path": [part.encode() for part in relative]}
+        for relative, _path, size in files
+    ],
+    "name": name,
+    "piece length": piece_length,
+    "pieces": bytes(pieces),
+}}
+
+with open(output, "wb") as file:
+    file.write(bencode(torrent))
+PY
+}
+
 phase_publish_update() {
     phase "60 Publish Runtime Update"
 
-    local version updates_root artifact_dir manifest_file signature_file signing_key
+    local version updates_root artifact_dir manifest_file signature_file torrent_file signing_key
     local signature_tmp
 
     updates_root="${UPDATES_DIR}"
@@ -612,15 +674,15 @@ phase_publish_update() {
     artifact_dir="${updates_root}/artifacts/${version}"
     manifest_file="${updates_root}/manifest.json"
     signature_file="${manifest_file}.sig"
+    torrent_file="${updates_root}/contest-${version}.torrent"
     signing_key=""
     if [[ -n "${UPDATE_SIGNING_PRIVATE_KEY_FILE:-}" ]]; then
         require_update_signing_key >/dev/null || return 1
         signing_key="${UPDATE_SIGNING_PRIVATE_KEY_FILE}"
-    elif [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-        die "UPDATE_SIGNING_PRIVATE_KEY_FILE is required for publish-update"
     fi
 
     publish_runtime_artifacts "${artifact_dir}" "${manifest_file}" "${version}"
+    write_runtime_torrent "${torrent_file}" "${artifact_dir}"
 
     if [[ -n "${signing_key}" ]]; then
         signature_tmp="$(mktemp)"
@@ -639,8 +701,11 @@ phase_publish_update() {
     log "Update version: ${version}"
     log "Update dir:     ${artifact_dir}"
     log "Manifest:       ${manifest_file}"
+    log "Torrent:        ${torrent_file}"
     if [[ -n "${signing_key}" ]]; then
         log "Signature:      ${signature_file}"
+    else
+        warn "Manifest unsigned; the signed automatic updater will not apply it"
     fi
 }
 
@@ -665,7 +730,7 @@ Targets:
   seed          ISO completa para el primer seed (default)
   full          Alias de seed
   runtime       Construye hasta runtime/ + grub-entry.cfg
-  publish-update Construye runtime y publica artifacts + manifest FIRMADO en updates/
+  publish-update Construye runtime y publica artifacts + manifest + torrent en updates/ (firma opcional)
   help          Muestra esta ayuda
 EOF
 }
@@ -698,10 +763,5 @@ run_build_target() {
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     target="${1:-full}"
-    case "${target}" in
-        publish-update|update|publish)
-            require_update_signing_key >/dev/null
-            ;;
-    esac
     run_build_target "${target}"
 fi

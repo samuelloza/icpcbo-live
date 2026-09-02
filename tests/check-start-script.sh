@@ -34,6 +34,7 @@ grep -q 'virt-viewer --connect qemu:///system' "${PROJECT_DIR}/start.sh" || \
 grep -q 'setfacl -m u:libvirt-qemu:rw /dev/kvm' "${PROJECT_DIR}/start.sh" || \
     fail "el launcher debe permitir que libvirt-qemu use KVM"
 grep -q 'build-seed' "${PROJECT_DIR}/start.sh" || fail "falta build seed en start.sh"
+grep -q 'publish-update' "${PROJECT_DIR}/start.sh" || fail "falta publish update en start.sh"
 
 OUTPUT_DIR="${tmp_dir}/output"
 mkdir -p "${OUTPUT_DIR}"
@@ -59,6 +60,7 @@ ISO_PATH=""
 run_start_action run
 run_start_action run-vm
 run_start_action build-seed
+run_start_action publish-update
 run_start_action menu
 run_start_action help
 
@@ -70,6 +72,7 @@ launch:/tmp/any.iso
 build:seed:gnome
 require:/tmp/any.iso
 launch:/tmp/any.iso
+build:publish-update:
 menu
 help
 EOF
