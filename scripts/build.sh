@@ -395,7 +395,7 @@ phase_pack_runtime() {
     write_runtime_grub_entry "${runtime_target}/grub-entry.cfg"
 
     # El árbol extraído (~10 GB) ya no se usa: el squashfs está empaquetado y las
-    # fases siguientes (ISO y publish-lan) solo leen RUNTIME_DIR.
+    # fases siguientes (ISO) solo leen RUNTIME_DIR.
     # Liberarlo aquí evita quedarse sin espacio al escribir el ISO.
     if [[ "${KEEP_ROOTFS:-0}" != "1" ]]; then
         rm -rf "${ROOTFS_DIR}"
@@ -644,95 +644,6 @@ phase_publish_update() {
     fi
 }
 
-# Genera un .torrent BitTorrent v1 (bencode + SHA1 de piezas) sin dependencias
-# extra en el host: solo python3, que ya usa el build. Sin tracker (LPD/PEX).
-# Equivale a `mktorrent -l 21 -n <name> <dir>`.
-write_lan_torrent() {
-    local out="$1" name="$2" src_dir="$3"
-    python3 - "${out}" "${name}" "${src_dir}" <<'PY'
-import hashlib, os, sys
-
-out, name, src = sys.argv[1:]
-PIECE = 1 << 21  # 2 MiB, = mktorrent -l 21
-
-def bencode(v):
-    if isinstance(v, int):
-        return b"i%de" % v
-    if isinstance(v, bytes):
-        return b"%d:%s" % (len(v), v)
-    if isinstance(v, str):
-        return bencode(v.encode())
-    if isinstance(v, list):
-        return b"l" + b"".join(bencode(x) for x in v) + b"e"
-    if isinstance(v, dict):
-        return b"d" + b"".join(
-            bencode(k) + bencode(v[k]) for k in sorted(v)
-        ) + b"e"
-    raise TypeError(type(v))
-
-files = []
-for root, _dirs, names in os.walk(src):
-    for n in sorted(names):
-        full = os.path.join(root, n)
-        rel = os.path.relpath(full, src).split(os.sep)
-        files.append((rel, full, os.path.getsize(full)))
-files.sort(key=lambda f: f[0])
-
-pieces = bytearray()
-buf = bytearray()
-for _rel, full, _size in files:
-    with open(full, "rb") as fh:
-        while True:
-            chunk = fh.read(PIECE - len(buf))
-            if not chunk:
-                break
-            buf += chunk
-            if len(buf) == PIECE:
-                pieces += hashlib.sha1(bytes(buf)).digest()
-                buf = bytearray()
-if buf:
-    pieces += hashlib.sha1(bytes(buf)).digest()
-
-info = {
-    "name": name,
-    "piece length": PIECE,
-    "pieces": bytes(pieces),
-    "files": [
-        {"length": size, "path": [c.encode() for c in rel]}
-        for rel, _full, size in files
-    ],
-}
-torrent = {"info": info}
-with open(out, "wb") as fh:
-    fh.write(bencode(torrent))
-PY
-}
-
-phase_publish_lan() {
-    phase "62 Publish LAN Artifacts"
-
-    local version artifact_dir manifest_file torrent_file
-    version="$(publish_runtime_version)"
-    artifact_dir="${UPDATES_DIR}/artifacts/${version}"
-    manifest_file="${UPDATES_DIR}/manifest.json"
-    torrent_file="${UPDATES_DIR}/contest-${version}.torrent"
-
-    publish_runtime_artifacts "${artifact_dir}" "${manifest_file}" "${version}"
-    rm -f "${manifest_file}.sig"   # LAN v1 sin firma (docs/LAN-DEPLOY.md §4)
-
-    rm -f "${torrent_file}"
-    # El nombre interno coincide con el folder portable que encuentra el
-    # initramfs. Así aria2 descarga directamente al folder final, sin duplicar
-    # el squashfs ni depender del USB después de validarlo.
-    write_lan_torrent "${torrent_file}" "${CONTEST_DIR#/}" "${artifact_dir}"
-
-    LAN_MANIFEST_FILE="${manifest_file}"
-    LAN_TORRENT_FILE="${torrent_file}"
-    LAN_ARTIFACT_DIR="${artifact_dir}"
-    log "LAN manifest:  ${manifest_file}"
-    log "LAN torrent:   ${torrent_file}"
-}
-
 build_runtime() {
     phase_prepare
     phase_bootstrap
@@ -748,14 +659,13 @@ main() {
 
 print_usage() {
     cat <<EOF
-Usage: $(basename "$0") [seed|full|runtime|publish-update|publish-lan|help]
+Usage: $(basename "$0") [seed|full|runtime|publish-update|help]
 
 Targets:
   seed          ISO completa para el primer seed (default)
   full          Alias de seed
   runtime       Construye hasta runtime/ + grub-entry.cfg
   publish-update Construye runtime y publica artifacts + manifest FIRMADO en updates/
-  publish-lan   Publica manifest y torrent para mini-deploy (sin firma)
   help          Muestra esta ayuda
 EOF
 }
@@ -768,7 +678,7 @@ run_build_target() {
             ISO_FLAVOR=seed main
             ;;
         deploy)
-            die "El build principal solo genera la ISO completa; usa start.sh build-mini para mini-deploy"
+            die "El build principal solo genera la ISO completa"
             ;;
         runtime)
             build_runtime
@@ -776,10 +686,6 @@ run_build_target() {
         publish-update|update|publish)
             build_runtime
             phase_publish_update
-            ;;
-        publish-lan)
-            build_runtime
-            phase_publish_lan
             ;;
         help|-h|--help)
             print_usage

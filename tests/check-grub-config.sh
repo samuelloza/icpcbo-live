@@ -47,10 +47,10 @@ if grep -Eq '\|\||&&' "${iso_grub}"; then
 fi
 assert_contains "${iso_grub}" 'search --no-floppy --quiet --set=hdd_root'
 
-# El despliegue LAN es responsabilidad exclusiva de mini-deploy.
+# El despliegue por red no forma parte de esta ISO.
 if grep -Fq 'Despliegue masivo por red (LAN / torrent)' "${iso_grub}" || \
    grep -Fq 'contest.install_mode=deploy' "${iso_grub}"; then
-    fail "main GRUB must not expose the mini-deploy LAN flow"
+    fail "main GRUB must not expose a network deploy flow"
 fi
 
 # GRUB y el kernel usan sólo la consola gráfica.

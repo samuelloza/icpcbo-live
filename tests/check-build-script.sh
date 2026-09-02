@@ -205,7 +205,6 @@ phase_trim() { echo "phase_trim" >> "${phase_log}"; }
 phase_pack_runtime() { echo "phase_pack_runtime" >> "${phase_log}"; }
 phase_build_iso() { echo "phase_build_iso" >> "${phase_log}"; }
 phase_publish_update() { echo "phase_publish_update" >> "${phase_log}"; }
-phase_publish_lan() { echo "phase_publish_lan" >> "${phase_log}"; }
 
 main
 assert_equals "$(cat <<'EOF'
@@ -255,9 +254,5 @@ assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/vmlinuz"
 assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/initrd.img"
 assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/${ROOT_SQUASH_NAME}"
 assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/grub-entry.cfg"
-
-phase_publish_lan
-
-assert_file "${UPDATES_DIR}/contest-${RUNTIME_VERSION}.torrent"
 
 echo "PASS: build.sh preserves helper staging and phase orchestration order."

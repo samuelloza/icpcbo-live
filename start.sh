@@ -43,46 +43,6 @@ latest_iso_path() {
         || true
 }
 
-mini_artifacts_dir() {
-    if [[ -n "${MINI_ARTIFACTS_DIR:-}" ]]; then
-        printf '%s\n' "${MINI_ARTIFACTS_DIR}"
-    elif [[ -f "${RUNTIME_DIR}/${CONTEST_DIR}/filesystem.squashfs" ]]; then
-        printf '%s\n' "${RUNTIME_DIR}/${CONTEST_DIR}"
-    else
-        python3 - "${UPDATES_DIR}" <<'PY'
-import json, pathlib, sys
-updates = pathlib.Path(sys.argv[1])
-try:
-    version = json.loads((updates / "manifest.json").read_text())["version"]
-except (OSError, ValueError, KeyError):
-    raise SystemExit(1)
-artifact = updates / "artifacts" / version
-required = ("filesystem.squashfs", "vmlinuz", "initrd.img", "grub-entry.cfg")
-if not all((artifact / name).is_file() for name in required):
-    raise SystemExit(1)
-print(artifact)
-PY
-    fi
-}
-
-build_mini_deploy() {
-    local artifacts build_apt_proxy="${APT_PROXY}"
-    artifacts="$(mini_artifacts_dir)"
-    [[ -f "${artifacts}/filesystem.squashfs" ]] || {
-        echo "ERROR: no existe runtime completo en ${artifacts}" >&2
-        echo "Genera primero la seed una vez, o indica MINI_ARTIFACTS_DIR=/ruta/al/runtime." >&2
-        return 1
-    }
-    if ! start_apt_cacher; then
-        echo "[apt-cacher] No disponible: mini build descargará directo." >&2
-        build_apt_proxy=""
-    fi
-    ARTIFACTS_DIR="${artifacts}" APT_PROXY="${build_apt_proxy}" \
-        METADATA_DIR="${MINI_METADATA_DIR:-${UPDATES_DIR}}" \
-        OUTPUT_DIR="${PROJECT_DIR}/mini-deploy/output" \
-        bash "${PROJECT_DIR}/mini-deploy/build-iso.sh"
-}
-
 OUTPUT_DIR_RESOLVED="$(resolve_output_dir)"
 if [[ -z "${ISO_PATH}" ]]; then
     ISO_PATH="$(latest_iso_path "${OUTPUT_DIR_RESOLVED}")"
@@ -225,33 +185,6 @@ launch_vm() {
     open_vm_interfaces "${VM_NAME}"
 }
 
-launch_mini_existing_disk() {
-    local selected_iso="${1:?missing ISO path}"
-    require_iso "${selected_iso}"
-    # El disco de laboratorio es descartable y se reinicia; WIN_XP_DISK nunca
-    # se incluye ni se modifica en esta ruta.
-    reset_lab_disk
-    ensure_lab_disk
-    reset_vm "${VM_NAME}"
-    echo "Iniciando Preparación del Equipo con disco existente: $(basename "${LAB_DISK_PATH}")"
-    virt-install \
-        --connect qemu:///system \
-        --virt-type "$(vm_accel)" \
-        --name "${VM_NAME}" \
-        --ram 6048 \
-        --vcpus 2 \
-        --disk "path=${LAB_DISK_PATH},format=qcow2,bus=virtio" \
-        --os-variant debian13 \
-        --cdrom "${selected_iso}" \
-        --network network=default \
-        --graphics spice \
-        --video virtio \
-        --autoconsole none \
-        --boot cdrom,hd,menu=on \
-        --cpu host-model
-    open_vm_interfaces "${VM_NAME}"
-}
-
 launch_winxp() {
     local with_iso="${1:-0}"
     local selected_iso="${2:-}"
@@ -357,16 +290,13 @@ show_built_iso() {
 
 start_usage() {
     cat <<EOF
-Uso: $(basename "$0") [menu|run-vm|run|build-mini|run-mini|build-seed|build-deploy|create-disk|help]
+Uso: $(basename "$0") [menu|run-vm|run|build-seed|create-disk|help]
 
 Acciones:
   menu            abre el menú interactivo
   run-vm          arranca el ISO más nuevo en una VM Debian limpia (borra el disco lab)
   run             arranca el ISO junto a la VM Windows XP (borra el disco lab, no el de Windows)
   build-seed      construye el ISO seed GNOME y lo inicia en una VM limpia
-  build-deploy    alias de build-mini y arranque en una VM limpia
-  build-mini      construye solo la ISO mini, sin iniciar una VM
-  run-mini        inicia la ISO mini existente sin construirla
   create-disk     crea el disco NTFS lab (se usa para probar una imagen de windows xp)
   help            muestra esta ayuda
 EOF
@@ -396,22 +326,6 @@ run_start_action() {
             require_iso "${selected_iso}"
             launch_vm "${selected_iso}"
             ;;
-        build-deploy)
-            build_mini_deploy
-            selected_iso="${PROJECT_DIR}/mini-deploy/output/mini-deploy.iso"
-            show_built_iso "${selected_iso}"
-            require_iso "${selected_iso}"
-            launch_vm "${selected_iso}"
-            ;;
-        build-mini)
-            build_mini_deploy
-            selected_iso="${PROJECT_DIR}/mini-deploy/output/mini-deploy.iso"
-            show_built_iso "${selected_iso}"
-            ;;
-        run-mini)
-            selected_iso="${PROJECT_DIR}/mini-deploy/output/mini-deploy.iso"
-            launch_mini_existing_disk "${selected_iso}"
-            ;;
         create-disk)
             create_lab_disk "${LAB_DISK_PATH}" 15
             ;;
@@ -438,11 +352,8 @@ start_interactive_menu() {
 ========================================
 1) Probar ISO en VM limpia (Debian, borra el disco lab)
 2) Generar e iniciar ISO Seed en VM limpia
-3) Generar e iniciar ISO Deploy ligera en VM limpia
-4) Generar ISO mini (sin iniciar VM)
-5) Iniciar ISO mini existente en VM limpia
-6) Crear disco NTFS lab
-7) Probar ISO junto a Windows XP (borra el disco lab, NO el de Windows)
+3) Crear disco NTFS lab
+4) Probar ISO junto a Windows XP (borra el disco lab, NO el de Windows)
 0) Salir
 
   (KEEP_LAB_DISK=1 conserva el disco lab para probar persistencia)
@@ -454,15 +365,12 @@ EOF
         case "${option}" in
             1) run_start_action run-vm; return 0 ;;
             2) run_start_action build-seed; return 0 ;;
-            3) run_start_action build-deploy; return 0 ;;
-            4) run_start_action build-mini; return 0 ;;
-            5) run_start_action run-mini; return 0 ;;
-            6)
+            3)
                 run_start_action create-disk
                 echo
                 read -r -p "Presiona Enter para volver al menú..." _
                 ;;
-            7) run_start_action run; return 0 ;;
+            4) run_start_action run; return 0 ;;
             0) return 0 ;;
             *)
                 echo "Opción inválida."

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Prepara únicamente los servicios del sistema completo. El despliegue LAN y
-# el mini initramfs viven en el proyecto separado mini-deploy.
+# Prepara únicamente los servicios del sistema completo
 
 set -euo pipefail
 
