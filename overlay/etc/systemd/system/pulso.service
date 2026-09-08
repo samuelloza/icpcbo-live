@@ -1,0 +1,18 @@
+[Unit]
+Description=pulso - agente de metricas
+After=network-online.target contest-allowlist.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/chmod +x /usr/local/bin/pulso
+ExecStart=/usr/local/bin/pulso --config /etc/pulso/pulso.toml
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+ProtectHome=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
