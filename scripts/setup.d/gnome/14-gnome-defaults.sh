@@ -4,7 +4,6 @@ set -euo pipefail
 
 OPT_DIR="${OPT_CONTEST_DIR}"
 
-# Configura el perfil de sistema de dconf para que GNOME lea la base de datos del sistema
 mkdir -p /etc/dconf/profile
 cat > /etc/dconf/profile/user <<'EOF'
 user-db:user
@@ -15,9 +14,22 @@ EOF
 mkdir -p /etc/dconf/db/local.d
 cat > /etc/dconf/db/local.d/20-contestant-defaults <<'EOF'
 [org/gnome/shell]
-enabled-extensions=['stealmyfocus-ext']
+enabled-extensions=['stealmyfocus-ext', 'ding@rastersoft.com']
 disable-user-extensions=false
-favorite-apps=['firefox-esr.desktop', 'org.gnome.Nautilus.desktop', 'org.gnome.Terminal.desktop']
+favorite-apps=['firefox-esr.desktop', 'code.desktop', 'sublime_text.desktop', 'geany.desktop', 'intellij_idea_community.desktop', 'org.gnome.Terminal.desktop', 'org.gnome.Nautilus.desktop', 'contest-call-staff.desktop']
+
+# Iconos de escritorio (desktop-icons-ng): solo el lanzador "Documentación",
+# anclado a la esquina inferior derecha. Sin carpeta personal, papelera ni
+# volumenes montados (el USB/ISO del instalador NO debe aparecer).
+[org/gnome/shell/extensions/ding]
+show-home=false
+show-trash=false
+show-volumes=false
+show-network-volumes=false
+show-drop-place=false
+start-corner='bottom-right'
+icon-size='standard'
+show-link-emblem=false
 
 EOF
 
@@ -31,12 +43,24 @@ EOF
 
 cat >> /etc/dconf/db/local.d/20-contestant-defaults <<EOF
 
+# El equipo no debe apagar pantalla, bloquearse ni suspender NUNCA.
 [org/gnome/desktop/session]
-idle-delay=uint32 900
+idle-delay=uint32 0
 
 [org/gnome/desktop/screensaver]
-lock-enabled=true
-lock-delay=uint32 30
+lock-enabled=false
+idle-activation-enabled=false
+
+[org/gnome/settings-daemon/plugins/power]
+sleep-inactive-ac-type='nothing'
+sleep-inactive-battery-type='nothing'
+sleep-inactive-ac-timeout=0
+sleep-inactive-battery-timeout=0
+power-button-action='nothing'
+idle-dim=false
+
+[org/gnome/desktop/wm/preferences]
+button-layout='appmenu:minimize,maximize,close'
 
 [org/gnome/desktop/interface]
 color-scheme='prefer-dark'

@@ -16,9 +16,10 @@ if (( ${#desktop_groups[@]} )); then
     usermod -G "$(IFS=,; echo "${desktop_groups[*]}")" "${DEFAULT_USER}"
 fi
 
+# Solo la cuenta del concurso (respaldo manual del staff si el autologin falla).
+# root lo maneja install-and-customize-chroot.sh: bloqueado salvo ROOT_PASSWORD.
 if [[ -n "${DEFAULT_PASSWORD:-}" ]]; then
     echo "${DEFAULT_USER}:${DEFAULT_PASSWORD}" | chpasswd
-    echo "root:${DEFAULT_PASSWORD}" | chpasswd
 fi
 
 if [[ "${ENABLE_AUTOLOGIN}" == "true" ]]; then

@@ -10,10 +10,12 @@ gnome-control-center
 gdm3
 nautilus
 gnome-terminal
+gnome-screenshot
 zenity
 evince
 file-roller
 gnome-themes-extra
+gnome-shell-extension-desktop-icons-ng
 dbus-user-session
 libglib2.0-bin
 libgtk-3-bin
@@ -24,6 +26,8 @@ libfontconfig1
 
 # Red
 network-manager
+systemd-timesyncd
+nftables
 wpasupplicant
 wireless-regdb
 iw
@@ -36,6 +40,7 @@ firmware-atheros
 firmware-ath9k-htc
 firmware-brcm80211
 firmware-mediatek
+firmware-libertas
 firmware-misc-nonfree
 
 # Arranque
@@ -64,11 +69,9 @@ e2fsprogs
 # Utilidades
 net-tools
 openssh-server
-ansible
 xvfb
 oathtool
 imagemagick
-zabbix-agent2
 wget
 axel
 
@@ -90,6 +93,7 @@ geany
 geany-plugin-automark
 geany-plugin-lineoperations
 geany-plugin-overview
+gedit-plugin-terminal
 emacs
 gedit
 joe

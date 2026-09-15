@@ -1,5 +1,11 @@
 [Desktop Entry]
-Name=Inicio
-Exec=xdg-open file:///usr/share/doc/contest/index.html
+Version=1.0
 Type=Application
-Icon=firefox
+Name=Documentación
+Name[es]=Documentación
+Comment=Guía del concurso, documentación
+Comment[es]=Guía del concurso: documentación
+Exec=firefox-esr /usr/share/doc/contest/index.html
+Icon=/opt/icpc/misc/doc-icon.svg
+Terminal=false
+Categories=Documentation;

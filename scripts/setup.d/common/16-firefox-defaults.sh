@@ -9,16 +9,18 @@ if [ ! -d "${FIREFOX_DIR}" ]; then
     exit 0
 fi
 
+# User-Agent con la etiqueta de región para el gate
+UA_BASE='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
+UA_TAG=" MOJ-ISO-${REGION_ID:-${MOJ_BOOTSTRAP_TAG:-lobby}}"
+
 mkdir -p "${FIREFOX_DIR}/defaults/pref"
 
-# Habilitar configuración automática
 cat > "${FIREFOX_DIR}/defaults/pref/icpcbo-autoconfig.js" <<'EOF'
 pref("general.config.filename", "icpcbo.cfg");
 pref("general.config.obscure_value", 0);
 EOF
 
-# Preferencias de configuración automática
-# (Firefox omite la primera línea que no sea comentario; por eso se empieza con comentario)
+# Firefox descarta la primera línea de icpcbo.cfg si no es un comentario.
 cat > "${FIREFOX_DIR}/icpcbo.cfg" <<EOF
 // Default homepage: local contest documentation
 defaultPref("browser.startup.homepage", "${DEFAULT_BROWSER_URL}");
@@ -44,4 +46,7 @@ defaultPref("startup.homepage_welcome_url.additional", "");
 
 // Disable password manager
 defaultPref("signon.rememberSignons", false);
+
+// User-Agent con etiqueta de región para el gate MOJ (bloqueado)
+lockPref("general.useragent.override", "${UA_BASE}${UA_TAG}");
 EOF

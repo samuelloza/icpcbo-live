@@ -9,14 +9,34 @@ user_home="$(getent passwd "${DEFAULT_USER_VAL}" | cut -d: -f6)"
 mkdir -p \
     /etc/skel/.config \
     /etc/skel/Desktop \
-    /usr/share/gnome/autostart \
+    /etc/xdg/autostart \
     "${user_home}/Desktop"
 
 echo yes > /etc/skel/.config/gnome-initial-setup-done
 
-install -m 755 "${OPT_DIR}/misc/desktop-home.desktop" /etc/skel/Desktop/desktop-home.desktop
-install -m 755 /usr/share/applications/gnome-keyboard-panel.desktop /etc/skel/Desktop/gnome-keyboard-panel.desktop
-install -m 644 "${OPT_DIR}/misc/desktop-gnome-autostart.desktop" /usr/share/gnome/autostart/desktop-gnome-autostart.desktop
+# Escritorio: solo el lanzador "Documentación" (desktop-icons-ng lo ancla a la
+# esquina inferior derecha, ver 14-gnome-defaults.sh). El resto de apps van en
+# el dash. gnome-session moderno solo lee /etc/xdg/autostart (no
+# /usr/share/gnome/autostart): ahi arranca el login zenity del concurso.
+install -m 644 "${OPT_DIR}/misc/desktop-gnome-autostart.desktop" /etc/xdg/autostart/desktop-gnome-autostart.desktop
+# Lanzador "Llamar al staff" para el dash (favorite-apps de 14-gnome-defaults.sh).
+install -m 644 "${OPT_DIR}/misc/contest-call-staff.desktop" /usr/share/applications/contest-call-staff.desktop
+# Lanzador "Documentación" en el escritorio. En /etc/skel para que sobreviva a
+# "limpiar home" (que recopia /etc/skel) y en el home ya creado del usuario.
+# 0755: desktop-icons-ng exige el bit +x (si no, "archivo .desktop roto").
+install -m 0755 "${OPT_DIR}/misc/desktop-home.desktop" /etc/skel/Desktop/documentacion.desktop
+install -m 0755 "${OPT_DIR}/misc/desktop-home.desktop" "${user_home}/Desktop/documentacion.desktop"
+# En cada login marca los .desktop del escritorio como confiables (el bit +x no
+# alcanza: DING tambien pide metadata::trusted, y reset-home borra ese metadata).
+cat > /etc/xdg/autostart/contest-trust-desktop.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Confiar en lanzadores del escritorio
+Exec=/usr/local/bin/contest-trust-desktop.sh
+NoDisplay=true
+X-GNOME-Autostart-Phase=Applications
+OnlyShowIn=GNOME;
+EOF
 
 cat >> /etc/skel/.bashrc <<EOF_BASHRC
 
@@ -28,6 +48,4 @@ cat > /etc/profile.d/icpc.sh <<EOF_PROFILE
 export PATH="\${PATH}:${OPT_DIR}/bin"
 EOF_PROFILE
 
-install -m 755 "${OPT_DIR}/misc/desktop-home.desktop" "${user_home}/Desktop/desktop-home.desktop"
-install -m 755 /usr/share/applications/gnome-keyboard-panel.desktop "${user_home}/Desktop/gnome-keyboard-panel.desktop"
 chown -R "${DEFAULT_USER_VAL}:${DEFAULT_USER_VAL}" "${user_home}/.config" "${user_home}/Desktop"
