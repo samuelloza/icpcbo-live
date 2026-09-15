@@ -87,10 +87,12 @@ autologin_etc="${tmp_dir}/autologin-etc"
 PATH="${stub_bin}:${PATH}" DEFAULT_USER=icpc DEFAULT_PASSWORD= \
     ENABLE_AUTOLOGIN=true ETC_DIR="${autologin_etc}/gnome" \
     bash "${GNOME_USER_HOOK}" >/dev/null
-gdm_conf="${autologin_etc}/gnome/gdm3/custom.conf"
-[[ -f "${gdm_conf}" ]] || fail "GNOME autologin: falta ${gdm_conf#${autologin_etc}/gnome}"
-assert_line "AutomaticLoginEnable=true" "${gdm_conf}"
-assert_line "AutomaticLogin=icpc" "${gdm_conf}"
+# Debian gdm3 usa daemon.conf; custom.conf es de Ubuntu. Deben quedar ambos.
+for gdm_conf in "${autologin_etc}/gnome/gdm3/daemon.conf" "${autologin_etc}/gnome/gdm3/custom.conf"; do
+    [[ -f "${gdm_conf}" ]] || fail "GNOME autologin: falta ${gdm_conf#${autologin_etc}/gnome}"
+    assert_line "AutomaticLoginEnable=true" "${gdm_conf}"
+    assert_line "AutomaticLogin=icpc" "${gdm_conf}"
+done
 
 PATH="${stub_bin}:${PATH}" DEFAULT_USER=icpc DEFAULT_PASSWORD= \
     ENABLE_AUTOLOGIN=true ETC_DIR="${autologin_etc}/xfce" \
@@ -108,8 +110,9 @@ PATH="${stub_bin}:${PATH}" DEFAULT_USER=icpc DEFAULT_PASSWORD= \
 [[ ! -e "${autologin_etc}/off/gdm3/custom.conf" ]] \
     || fail "GNOME no debe escribir autologin con ENABLE_AUTOLOGIN=false"
 
-# Con DEFAULT_PASSWORD no vacío la cuenta recibe contraseña (respaldo manual
-# del staff si el autologin falla).
+# Con DEFAULT_PASSWORD no vacío la cuenta del concurso recibe contraseña
+# (respaldo manual del staff si el autologin falla). El hook de usuario NO debe
+# tocar root: eso lo hace install-and-customize-chroot.sh.
 chpasswd_log="${tmp_dir}/chpasswd.log"
 cat > "${stub_bin}/chpasswd" <<EOF
 #!/usr/bin/env bash
@@ -121,8 +124,26 @@ PATH="${stub_bin}:${PATH}" DEFAULT_USER=icpc DEFAULT_PASSWORD=icpc \
     bash "${GNOME_USER_HOOK}" >/dev/null
 grep -qx 'icpc:icpc' "${chpasswd_log}" \
     || fail "con DEFAULT_PASSWORD debe fijarse la contraseña de la cuenta"
-grep -qx 'root:icpc' "${chpasswd_log}" \
-    || fail "con DEFAULT_PASSWORD debe permitir su - como root"
+if grep -q '^root:' "${chpasswd_log}"; then
+    fail "el hook de usuario no debe dar contraseña a root"
+fi
+
+# install-and-customize-chroot.sh: usuario nunca en sudo, root bloqueado salvo
+# ROOT_PASSWORD.
+CHROOT_HOOK="${PROJECT_DIR}/scripts/build/install-and-customize-chroot.sh"
+grep -Eq 'useradd .*-G audio,video ' "${CHROOT_HOOK}" \
+    || fail "el fallback de useradd debe usar -G audio,video (sin sudo)"
+if grep -Eq 'useradd .*-G[^ ]*sudo' "${CHROOT_HOOK}"; then
+    fail "install-and-customize-chroot.sh no debe agregar el grupo sudo en useradd"
+fi
+grep -q 'gpasswd -d "${DEFAULT_USER}" sudo' "${CHROOT_HOOK}" \
+    || fail "debe quitar al usuario del concurso del grupo sudo"
+grep -q 'passwd -l root' "${CHROOT_HOOK}" \
+    || fail "root debe quedar bloqueado cuando ROOT_PASSWORD está vacío"
+grep -q 'echo "root:${ROOT_PASSWORD}" | chpasswd' "${CHROOT_HOOK}" \
+    || fail "ROOT_PASSWORD debe poder fijar la contraseña de root"
+grep -q '^ROOT_PASSWORD=' "${PROJECT_DIR}/config/iso.conf" \
+    || fail "config/iso.conf debe definir ROOT_PASSWORD"
 
 assert_line "PermitRootLogin no" "${SSH_HARDENING}"
 assert_line "PasswordAuthentication no" "${SSH_HARDENING}"
@@ -133,22 +154,16 @@ source "${PROJECT_DIR}/config/iso.conf"
 # shellcheck source=/dev/null
 source "${PROJECT_DIR}/scripts/build/grub.sh"
 
-runtime_grub="${tmp_dir}/runtime-grub.cfg"
 iso_grub="${tmp_dir}/iso-grub.cfg"
 GRUB_ADMIN_PASSWORD_HASH="grub.pbkdf2.sha512.10000.ABCD0123.DEADBEEF"
 
-write_runtime_grub_entry "${runtime_grub}"
 write_iso_grub_cfg "${iso_grub}"
 
-for grub_cfg in "${runtime_grub}" "${iso_grub}"; do
-    assert_line 'set superusers="contestadmin"' "${grub_cfg}"
-    assert_line \
-        "password_pbkdf2 contestadmin ${GRUB_ADMIN_PASSWORD_HASH}" \
-        "${grub_cfg}"
-done
+assert_line 'set superusers="contestadmin"' "${iso_grub}"
+assert_line \
+    "password_pbkdf2 contestadmin ${GRUB_ADMIN_PASSWORD_HASH}" \
+    "${iso_grub}"
 
-grep -Fq 'menuentry "'"${ISO_NAME}"' (folder mode)" --unrestricted {' "${runtime_grub}" \
-    || fail "runtime normal entry must be unrestricted"
 grep -Fq 'menuentry "Iniciar ICPC BO (persistencia del home)" --unrestricted {' "${iso_grub}" \
     || fail "normal ISO entries must be unrestricted"
 
@@ -166,10 +181,10 @@ fi
     || fail "GRUB config must not be created without an admin hash"
 
 GRUB_ADMIN_PASSWORD_HASH="not-a-pbkdf2-hash"
-if write_runtime_grub_entry "${tmp_dir}/invalid-runtime.cfg" 2> "${tmp_dir}/invalid-hash.err"; then
+if write_iso_grub_cfg "${tmp_dir}/invalid-hash.cfg" 2> "${tmp_dir}/invalid-hash.err"; then
     fail "invalid GRUB admin hash must fail closed"
 fi
-[[ ! -e "${tmp_dir}/invalid-runtime.cfg" ]] \
-    || fail "runtime GRUB config must not be created with an invalid hash"
+[[ ! -e "${tmp_dir}/invalid-hash.cfg" ]] \
+    || fail "GRUB config must not be created with an invalid hash"
 
 echo "PASS: local users, root console access, SSH restrictions and GRUB actions are configured."

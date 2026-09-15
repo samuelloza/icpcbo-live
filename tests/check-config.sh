@@ -85,12 +85,10 @@ assert_file "scripts/setup.d/common/89-prune-locales.sh"
 assert_file "scripts/setup.d/common/90-initramfs.sh"
 assert_file "overlay/etc/initramfs-tools/hooks/contest-overlay-tools"
 assert_file "overlay/etc/systemd/system/contest-overlay-provision.service"
-assert_file "overlay/etc/systemd/system/contest-update.service"
 assert_file "overlay/usr/lib/contest/lib/base.sh"
 assert_file "overlay/usr/lib/contest/lib/fs.sh"
 assert_file "overlay/usr/lib/contest/lib/runtime-layout.sh"
 assert_file "overlay/usr/lib/contest/provision-overlay.sh"
-assert_file "overlay/usr/lib/contest/update.sh"
 assert_file "overlay/usr/lib/contest/rollback.sh"
 assert_file "scripts/run-hook-dir.sh"
 assert_file "scripts/cached-curl.sh"
@@ -247,7 +245,6 @@ fi
 
 required_security_variables=(
     GRUB_ADMIN_PASSWORD_HASH UPDATE_SIGNATURE_PUBKEY UPDATE_SIGNATURE_PUBKEY_FILE
-    UPDATE_SIGNING_PRIVATE_KEY_FILE
     TEAM_ID_REQUIRED
 )
 for variable in "${required_security_variables[@]}"; do
@@ -255,8 +252,6 @@ for variable in "${required_security_variables[@]}"; do
 done
 
 assert_equals "icpc" "${DEFAULT_PASSWORD}" "DEFAULT_PASSWORD (credencial de escritorio conocida)"
-assert_equals "" "${UPDATE_MANIFEST_URL}" "UPDATE_MANIFEST_URL safe default"
-assert_equals "false" "${UPDATE_CHECK_ON_BOOT}" "UPDATE_CHECK_ON_BOOT safe default"
 assert_equals "true" "${TEAM_ID_REQUIRED}" "TEAM_ID_REQUIRED default"
 [[ "${UPDATE_SIGNATURE_PUBKEY}" == /* ]] || \
     fail "UPDATE_SIGNATURE_PUBKEY must be an absolute public-key path"
@@ -300,8 +295,6 @@ env \
     INSTALL_ROOT="${security_root}" \
     INSTALL_OWNER="$(id -un)" \
     INSTALL_GROUP="$(id -gn)" \
-    UPDATE_CHECK_ON_BOOT=false \
-    UPDATE_MANIFEST_URL= \
     UPDATE_SIGNATURE_PUBKEY=/usr/share/contest/keys/update-signing.pub \
     UPDATE_SIGNATURE_PUBKEY_SOURCE="${tmp_dir}/missing-public-key" \
     TEAM_ID_REQUIRED=true \
@@ -321,7 +314,7 @@ tracked_security_paths=(
 if grep -RIl -- 'BEGIN .*PRIVATE KEY' "${tracked_security_paths[@]}" | grep -q .; then
     fail "private key material found in tracked runtime/build files"
 fi
-if grep -REn '^[[:space:]]*(GRUB_ADMIN_PASSWORD_HASH|UPDATE_SIGNING_PRIVATE_KEY_FILE)=[\"'\"'][^\"'\"'$]+[\"'\"']' \
+if grep -REn '^[[:space:]]*GRUB_ADMIN_PASSWORD_HASH=[\"'\"'][^\"'\"'$]+[\"'\"']' \
     "${PROJECT_DIR}/config/iso.conf" >/dev/null; then
     fail "secret-bearing defaults (GRUB hash, clave de firma) deben quedar vacíos en config/iso.conf"
 fi

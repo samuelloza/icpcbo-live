@@ -331,6 +331,8 @@ phase_install_and_customize() {
         KEYBOARD_LAYOUT="${KEYBOARD_LAYOUT}" \
         DEFAULT_USER="${DEFAULT_USER}" \
         DEFAULT_PASSWORD="${DEFAULT_PASSWORD}" \
+        ROOT_PASSWORD="${ROOT_PASSWORD:-}" \
+        DEBUG_SUDO="${DEBUG_SUDO:-false}" \
         ENABLE_AUTOLOGIN="${ENABLE_AUTOLOGIN}" \
         DEFAULT_BROWSER_URL="${DEFAULT_BROWSER_URL}" \
         GNOME_INPUT_SOURCES="${GNOME_INPUT_SOURCES}" \
@@ -338,22 +340,36 @@ phase_install_and_customize() {
         META_DISTRO_ID="${META_DISTRO_ID}" \
         META_DISTRO_NAME="${META_DISTRO_NAME}" \
         META_DISTRO_VERSION="${META_DISTRO_VERSION}" \
-        UPDATE_MANIFEST_URL="${UPDATE_MANIFEST_URL}" \
-        UPDATE_CHECK_ON_BOOT="${UPDATE_CHECK_ON_BOOT}" \
+        REGION_ID="${REGION_ID:-}" \
+        REGION_NAME="${REGION_NAME:-}" \
         UPDATE_SIGNATURE_PUBKEY="${UPDATE_SIGNATURE_PUBKEY}" \
         UPDATE_SIGNATURE_PUBKEY_SOURCE="/tmp/contest-security/update-signing.pub" \
-        RUNTIME_VERSION="${RUNTIME_VERSION}" \
         TEAM_ID_REQUIRED="${TEAM_ID_REQUIRED}" \
         AUTH_SERVICE_URL="${AUTH_SERVICE_URL}" \
         AUTH_SERVICE_TIMEOUT="${AUTH_SERVICE_TIMEOUT}" \
         OPT_CONTEST_DIR="${OPT_CONTEST_DIR}" \
-        ICP_REPORT_URL="${ICP_REPORT_URL}" \
-        ICP_REPORT_TIMEOUT="${ICP_REPORT_TIMEOUT}" \
-        STATS_LOG_SINCE="${STATS_LOG_SINCE}" \
-        STATS_REPORT_ON_BOOT="${STATS_REPORT_ON_BOOT}" \
-        STATS_REPORT_INTERVAL="${STATS_REPORT_INTERVAL}" \
+        PULSO_RELEASE_URL="${PULSO_RELEASE_URL:-}" \
+        PULSO_PUSHGATEWAY_URL="${PULSO_PUSHGATEWAY_URL:-}" \
+        PULSO_JOB="${PULSO_JOB:-pulso}" \
+        NET_LOCKDOWN="${NET_LOCKDOWN:-true}" \
+        NET_DNS_SERVERS="${NET_DNS_SERVERS:-}" \
+        NET_NTP_SERVERS="${NET_NTP_SERVERS:-}" \
+        NET_ALLOW_HOSTS="${NET_ALLOW_HOSTS:-}" \
+        USB_STORAGE_DEFAULT="${USB_STORAGE_DEFAULT:-blocked}" \
+        CONTROL_SERVICE_URL="${CONTROL_SERVICE_URL:-}" \
+        CONTROL_TIMEOUT="${CONTROL_TIMEOUT:-20}" \
+        CONTROL_LONGPOLL_WAIT="${CONTROL_LONGPOLL_WAIT:-25}" \
+        CONTROL_STATUS_EVERY="${CONTROL_STATUS_EVERY:-1}" \
+        CONTROL_JOURNAL_EVERY="${CONTROL_JOURNAL_EVERY:-20}" \
+        GROUP_ID="${GROUP_ID:-}" \
+        ENROLL_TOKEN="${ENROLL_TOKEN:-}" \
+        ALLOW_VM="${ALLOW_VM:-false}" \
+        LOCKSCREEN_PASSWORD="${LOCKSCREEN_PASSWORD:-}" \
         DOWNLOAD_CACHE_DIR=/tmp/download-cache \
         DOWNLOAD_CONNECTIONS="${DOWNLOAD_CONNECTIONS}"
+
+    [[ -z "${PULSO_PUSHGATEWAY_URL:-}" || -x "${ROOTFS_DIR}/usr/local/bin/pulso" ]] || \
+        die "Pulso quedó habilitado pero falta ${ROOTFS_DIR}/usr/local/bin/pulso"
 }
 
 phase_trim() {
@@ -418,7 +434,7 @@ phase_build_iso() {
         *) die "ISO flavor desconocido: ${ISO_FLAVOR}" ;;
     esac
 
-    iso_name="20260901222621"
+    iso_name="${REGION_ID:+${REGION_ID}-}20260901222621"
     iso_file="${OUTPUT_DIR}/${iso_name}.iso"
 
     [[ -f "${kernel_source}" ]] || die "Missing runtime kernel: ${kernel_source}"
@@ -469,246 +485,6 @@ phase_build_iso() {
     log "ISO:      ${iso_file}"
     log "SHA256:   ${iso_file}.sha256"
 }
-
-publish_runtime_version() {
-    if [[ -n "${RUNTIME_VERSION}" && "${RUNTIME_VERSION}" != "dev" ]]; then
-        printf '%s\n' "${RUNTIME_VERSION}"
-    else
-        date -u +%Y%m%d%H%M%S
-    fi
-}
-
-require_update_signing_key() {
-    local key_file="${UPDATE_SIGNING_PRIVATE_KEY_FILE:-}"
-    local resolved_key
-
-    [[ -n "${key_file}" ]] || die "UPDATE_SIGNING_PRIVATE_KEY_FILE is required for publish-update"
-    [[ "${key_file}" == /* ]] || die "Update signing private key must use an absolute path"
-    [[ -f "${key_file}" ]] || die "Update signing private key does not exist: ${key_file}"
-    [[ "$(stat -c %a "${key_file}")" == "600" ]] || \
-        die "Update signing private key must have mode 0600: ${key_file}"
-
-    resolved_key="$(readlink -f "${key_file}")"
-    case "${resolved_key}" in
-        "${PROJECT_DIR}"/*)
-            die "Update signing private key must be external to the repository"
-            ;;
-    esac
-
-    openssl pkey -in "${key_file}" -text_pub -noout 2>/dev/null | \
-        grep -q '^ED25519 Public-Key:' || \
-        die "Update signing private key must be Ed25519"
-    printf '%s\n' "${key_file}"
-}
-
-write_canonical_update_manifest() {
-    local manifest_file="$1"
-    local version="$2"
-    local vmlinuz_sha="$3"
-    local initrd_sha="$4"
-    local squashfs_sha="$5"
-    local grub_entry_sha="$6"
-    local next_key_file="${UPDATE_NEXT_SIGNING_PUBLIC_KEY_FILE:-}"
-
-    if [[ -n "${next_key_file}" ]]; then
-        [[ "${next_key_file}" == /* ]] || \
-            die "Next update signing public key must use an absolute path"
-        [[ -f "${next_key_file}" ]] || \
-            die "Next update signing public key does not exist: ${next_key_file}"
-        openssl pkey -pubin -in "${next_key_file}" -text -noout 2>/dev/null | \
-            grep -q '^ED25519 Public-Key:' || \
-            die "Next update signing public key must be Ed25519"
-    fi
-
-    python3 - "${manifest_file}" "${version}" "${ROOT_SQUASH_NAME}" \
-        "${vmlinuz_sha}" "${initrd_sha}" "${squashfs_sha}" "${grub_entry_sha}" \
-        "${next_key_file}" <<'PY'
-import hashlib
-import json
-import pathlib
-import sys
-
-(
-    output_path,
-    version,
-    squashfs_name,
-    vmlinuz_sha,
-    initrd_sha,
-    squashfs_sha,
-    grub_entry_sha,
-    next_key_path,
-) = sys.argv[1:]
-
-manifest = {
-    "artifacts": {
-        "filesystem_squashfs": {
-            "sha256": squashfs_sha,
-            "url": f"artifacts/{version}/{squashfs_name}",
-        },
-        "grub_entry_cfg": {
-            "sha256": grub_entry_sha,
-            "url": f"artifacts/{version}/grub-entry.cfg",
-        },
-        "initrd_img": {
-            "sha256": initrd_sha,
-            "url": f"artifacts/{version}/initrd.img",
-        },
-        "vmlinuz": {
-            "sha256": vmlinuz_sha,
-            "url": f"artifacts/{version}/vmlinuz",
-        },
-    },
-    "version": version,
-}
-
-if next_key_path:
-    key_bytes = pathlib.Path(next_key_path).read_bytes()
-    try:
-        key_text = key_bytes.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise SystemExit(f"next signing public key is not UTF-8: {exc}")
-    manifest["next_signing_key"] = key_text
-    manifest["next_signing_key_sha256"] = hashlib.sha256(key_bytes).hexdigest()
-
-canonical = json.dumps(
-    manifest,
-    ensure_ascii=False,
-    separators=(",", ":"),
-    sort_keys=True,
-).encode("utf-8") + b"\n"
-pathlib.Path(output_path).write_bytes(canonical)
-PY
-}
-
-publish_runtime_artifacts() {
-    local artifact_dir="$1" manifest_file="$2" version="$3"
-    local runtime_target="${RUNTIME_DIR}/${CONTEST_DIR}"
-    local f vmlinuz_sha initrd_sha squashfs_sha grub_entry_sha
-
-    for f in vmlinuz initrd.img "${ROOT_SQUASH_NAME}" grub-entry.cfg; do
-        [[ -f "${runtime_target}/${f}" ]] || die "Missing runtime artifact: ${f}"
-    done
-    mkdir -p "${artifact_dir}"
-    for f in vmlinuz initrd.img "${ROOT_SQUASH_NAME}" grub-entry.cfg; do
-        cp -a "${runtime_target}/${f}" "${artifact_dir}/${f}"
-    done
-
-    vmlinuz_sha="$(sha256sum "${artifact_dir}/vmlinuz" | awk '{print $1}')"
-    initrd_sha="$(sha256sum "${artifact_dir}/initrd.img" | awk '{print $1}')"
-    squashfs_sha="$(sha256sum "${artifact_dir}/${ROOT_SQUASH_NAME}" | awk '{print $1}')"
-    grub_entry_sha="$(sha256sum "${artifact_dir}/grub-entry.cfg" | awk '{print $1}')"
-    write_canonical_update_manifest "${manifest_file}" "${version}" \
-        "${vmlinuz_sha}" "${initrd_sha}" "${squashfs_sha}" "${grub_entry_sha}"
-}
-
-# Generates a dependency-free BitTorrent v1
-write_runtime_torrent() {
-    local output_file="$1" source_dir="$2"
-
-    python3 - "${output_file}" "${CONTEST_DIR#/}" "${source_dir}" <<'PY'
-import hashlib
-import os
-import sys
-
-output, name, source = sys.argv[1:]
-piece_length = 1 << 21
-
-def bencode(value):
-    if isinstance(value, int):
-        return b"i%de" % value
-    if isinstance(value, bytes):
-        return str(len(value)).encode() + b":" + value
-    if isinstance(value, str):
-        return bencode(value.encode())
-    if isinstance(value, list):
-        return b"l" + b"".join(bencode(item) for item in value) + b"e"
-    if isinstance(value, dict):
-        return b"d" + b"".join(
-            bencode(key) + bencode(value[key]) for key in sorted(value)
-        ) + b"e"
-    raise TypeError(type(value))
-
-files = []
-for root, _dirs, names in os.walk(source):
-    for filename in sorted(names):
-        path = os.path.join(root, filename)
-        relative = os.path.relpath(path, source).split(os.sep)
-        files.append((relative, path, os.path.getsize(path)))
-files.sort(key=lambda item: item[0])
-
-pieces = bytearray()
-buffer = bytearray()
-for _relative, path, _size in files:
-    with open(path, "rb") as file:
-        while chunk := file.read(piece_length - len(buffer)):
-            buffer += chunk
-            if len(buffer) == piece_length:
-                pieces += hashlib.sha1(buffer).digest()
-                buffer.clear()
-if buffer:
-    pieces += hashlib.sha1(buffer).digest()
-
-torrent = {"info": {
-    "files": [
-        {"length": size, "path": [part.encode() for part in relative]}
-        for relative, _path, size in files
-    ],
-    "name": name,
-    "piece length": piece_length,
-    "pieces": bytes(pieces),
-}}
-
-with open(output, "wb") as file:
-    file.write(bencode(torrent))
-PY
-}
-
-phase_publish_update() {
-    phase "60 Publish Runtime Update"
-
-    local version updates_root artifact_dir manifest_file signature_file torrent_file signing_key
-    local signature_tmp
-
-    updates_root="${UPDATES_DIR}"
-    version="$(publish_runtime_version)"
-    artifact_dir="${updates_root}/artifacts/${version}"
-    manifest_file="${updates_root}/manifest.json"
-    signature_file="${manifest_file}.sig"
-    torrent_file="${updates_root}/contest-${version}.torrent"
-    signing_key=""
-    if [[ -n "${UPDATE_SIGNING_PRIVATE_KEY_FILE:-}" ]]; then
-        require_update_signing_key >/dev/null || return 1
-        signing_key="${UPDATE_SIGNING_PRIVATE_KEY_FILE}"
-    fi
-
-    publish_runtime_artifacts "${artifact_dir}" "${manifest_file}" "${version}"
-    write_runtime_torrent "${torrent_file}" "${artifact_dir}"
-
-    if [[ -n "${signing_key}" ]]; then
-        signature_tmp="$(mktemp)"
-        openssl pkeyutl -sign -rawin -inkey "${signing_key}" \
-            -in "${manifest_file}" -out "${signature_tmp}" || {
-            rm -f "${signature_tmp}"
-            die "Cannot sign update manifest"
-        }
-        openssl base64 -A -in "${signature_tmp}" > "${signature_file}"
-        printf '\n' >> "${signature_file}"
-        rm -f "${signature_tmp}"
-    else
-        rm -f "${signature_file}"
-    fi
-
-    log "Update version: ${version}"
-    log "Update dir:     ${artifact_dir}"
-    log "Manifest:       ${manifest_file}"
-    log "Torrent:        ${torrent_file}"
-    if [[ -n "${signing_key}" ]]; then
-        log "Signature:      ${signature_file}"
-    else
-        warn "Manifest unsigned; the signed automatic updater will not apply it"
-    fi
-}
-
 build_runtime() {
     phase_prepare
     phase_bootstrap
@@ -724,13 +500,12 @@ main() {
 
 print_usage() {
     cat <<EOF
-Usage: $(basename "$0") [seed|full|runtime|publish-update|help]
+Usage: $(basename "$0") [seed|full|runtime|help]
 
 Targets:
   seed          ISO completa para el primer seed (default)
   full          Alias de seed
   runtime       Construye hasta runtime/ + grub-entry.cfg
-  publish-update Construye runtime y publica artifacts + manifest + torrent en updates/ (firma opcional)
   help          Muestra esta ayuda
 EOF
 }
@@ -747,10 +522,6 @@ run_build_target() {
             ;;
         runtime)
             build_runtime
-            ;;
-        publish-update|update|publish)
-            build_runtime
-            phase_publish_update
             ;;
         help|-h|--help)
             print_usage

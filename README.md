@@ -111,6 +111,31 @@ Construir y levantar la VM de prueba:
 sudo ./start.sh build-run
 ```
 
+## ISOs por región
+
+Un ISO por región (La Paz, El Alto, Sucre, ...), cada uno con su `REGION_ID`.
+El id va en el nombre del archivo (`<id>-20260901222621.iso`), en
+`/etc/contestiso/region.env`, en `/etc/issue` y en `os-release` (`VARIANT_ID`).
+Si no se define `GROUP_ID`, se usa `REGION_ID` como identidad ante el
+control-server.
+
+Una sola región (env var):
+
+```bash
+REGION_ID=lapaz REGION_NAME="La Paz" sudo -E ./scripts/build.sh seed
+```
+
+Todas de una, desde un archivo:
+
+```bash
+cp config/regions.conf.example config/regions.conf   # editá id | Nombre | enroll_token
+sudo ./scripts/build-regions.sh                      # un ISO por línea
+```
+
+`config/regions.conf` está gitignored (puede llevar enroll tokens). El primer
+build hace debootstrap + paquetes; los siguientes reusan el caché del rootfs
+base y solo repiten squashfs + ISO.
+
 ## Escritorio
 
 Por defecto se construye GNOME:

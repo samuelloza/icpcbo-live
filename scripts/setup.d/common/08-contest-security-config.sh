@@ -16,28 +16,6 @@ install -d -o "${INSTALL_OWNER}" -g "${INSTALL_GROUP}" -m 0755 \
 install -d -o "${INSTALL_OWNER}" -g "${INSTALL_GROUP}" -m 0700 \
     "${contest_config_dir}/secrets"
 
-require_enabled_value() {
-    local enabled="$1"
-    local variable_name="$2"
-    local value="$3"
-
-    if [[ "${enabled}" == "true" && -z "${value}" ]]; then
-        echo "FATAL: ${variable_name} is required when its feature is enabled" >&2
-        exit 1
-    fi
-}
-
-require_enabled_file() {
-    local enabled="$1"
-    local variable_name="$2"
-    local path="$3"
-
-    if [[ "${enabled}" == "true" && ! -f "${path}" ]]; then
-        echo "FATAL: ${variable_name} must reference a readable staged file" >&2
-        exit 1
-    fi
-}
-
 install_optional_file() {
     local source_path="$1"
     local destination_path="$2"
@@ -47,11 +25,6 @@ install_optional_file() {
     install -o "${INSTALL_OWNER}" -g "${INSTALL_GROUP}" -m "${mode}" \
         "${source_path}" "$(root_path "${destination_path}")"
 }
-
-if [[ "${UPDATE_CHECK_ON_BOOT}" == "true" ]]; then
-    require_enabled_value true UPDATE_MANIFEST_URL "${UPDATE_MANIFEST_URL}"
-    require_enabled_file true UPDATE_SIGNATURE_PUBKEY_SOURCE "${UPDATE_SIGNATURE_PUBKEY_SOURCE}"
-fi
 
 install -d -o "${INSTALL_OWNER}" -g "${INSTALL_GROUP}" -m 0755 \
     "$(root_path "$(dirname "${UPDATE_SIGNATURE_PUBKEY}")")"

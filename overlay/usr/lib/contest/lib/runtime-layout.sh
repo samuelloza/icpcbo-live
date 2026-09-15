@@ -91,16 +91,10 @@ write_runtime_version() {
 
 link_runtime_files() {
     local contest_root="${1:-}"
-    local current_dir
 
     require_value "${contest_root}" "contest root"
-    current_dir="$(contest_current_dir "${contest_root}")"
 
     ln -sfn "current/vmlinuz" "${contest_root}/vmlinuz"
     ln -sfn "current/initrd.img" "${contest_root}/initrd.img"
     ln -sfn "current/filesystem.squashfs" "${contest_root}/filesystem.squashfs"
-
-    if [ -f "${current_dir}/grub-entry.cfg" ]; then
-        ln -sfn "current/grub-entry.cfg" "${contest_root}/grub-entry.cfg"
-    fi
 }

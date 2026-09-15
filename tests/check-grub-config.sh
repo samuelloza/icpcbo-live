@@ -22,22 +22,16 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
 GRUB_ADMIN_PASSWORD_HASH="grub.pbkdf2.sha512.10000.ABCD0123.DEADBEEF"
-runtime_grub="${tmp_dir}/grub-entry.cfg"
 iso_grub="${tmp_dir}/grub.cfg"
 
-write_runtime_grub_entry "${runtime_grub}"
 write_iso_grub_cfg "${iso_grub}"
 
-for config in "${runtime_grub}" "${iso_grub}"; do
-    assert_contains "${config}" 'set superusers="contestadmin"'
-    assert_contains "${config}" \
-        "password_pbkdf2 contestadmin ${GRUB_ADMIN_PASSWORD_HASH}"
-    assert_contains "${config}" "linux /${CONTEST_DIR}/vmlinuz"
-    assert_contains "${config}" "initrd /${CONTEST_DIR}/initrd.img"
-done
+assert_contains "${iso_grub}" 'set superusers="contestadmin"'
+assert_contains "${iso_grub}" \
+    "password_pbkdf2 contestadmin ${GRUB_ADMIN_PASSWORD_HASH}"
+assert_contains "${iso_grub}" "linux /${CONTEST_DIR}/vmlinuz"
+assert_contains "${iso_grub}" "initrd /${CONTEST_DIR}/initrd.img"
 
-assert_contains "${runtime_grub}" \
-    "menuentry \"${ISO_NAME} (folder mode)\" --unrestricted {"
 assert_contains "${iso_grub}" \
     'menuentry "Iniciar ICPC BO (persistencia del home)" --unrestricted {'
 assert_contains "${iso_grub}" 'contest.reset_home=1'

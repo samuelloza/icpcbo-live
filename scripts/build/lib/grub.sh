@@ -50,6 +50,12 @@ grub_linux_line() {
     if [[ "${splash_mode}" == "splash" ]]; then
         printf ' quiet splash'
     fi
+    # pcie_aspm=off: algunas maquinas dejan el wifi Intel trabado (iwlwifi
+    # probe failed, error -110) tras cualquier reinicio en caliente (reboot,
+    # kexec) por un bug de ASPM en el firmware; solo un apagado completo lo
+    # arregla. Desactivar ASPM globalmente evita la carrera sin depender de
+    # que cada maquina de concurso se apague fisico entre arranques.
+    printf ' pcie_aspm=off'
     printf ' contest_dir=%s contest_root=%s contest_persist=%s console=tty0' \
         "$(grub_runtime_dir)" \
         "${ROOT_SQUASH_NAME}" \

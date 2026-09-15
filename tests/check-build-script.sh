@@ -137,13 +137,21 @@ grep -q 'seed|full|all' "${PROJECT_DIR}/scripts/build.sh" || \
     fail "build.sh debe soportar la ISO seed"
 grep -q 'ISO_FLAVOR' "${PROJECT_DIR}/scripts/build.sh" || \
     fail "build.sh debe separar el contenido de seed/deploy"
+for variable in PULSO_RELEASE_URL PULSO_PUSHGATEWAY_URL PULSO_JOB; do
+    grep -q "${variable}=\"\${${variable}:-" "${PROJECT_DIR}/scripts/build.sh" || \
+        fail "build.sh debe pasar ${variable} al hook que instala /usr/local/bin/pulso"
+done
+grep -qx 'BIN=/usr/local/bin/pulso' "${PROJECT_DIR}/scripts/setup.d/common/29-pulso.sh" || \
+    fail "pulso debe instalarse donde lo busca pulso.service"
+grep -q 'ROOTFS_DIR}/usr/local/bin/pulso' "${PROJECT_DIR}/scripts/build.sh" || \
+    fail "el build debe abortar si Pulso está habilitado pero el binario no fue instalado"
 if grep -q 'https_proxy="${APT_PROXY}"' "${PROJECT_DIR}/scripts/build.sh"; then
     fail "debootstrap must not export apt-cacher-ng as https_proxy"
 fi
 grep -q 'cd "${OUTPUT_DIR}" && sha256sum' "${PROJECT_DIR}/scripts/build.sh" || \
     fail "el checksum de la ISO debe usar una ruta portable"
-grep -q 'iso_name="20260901222621"' "${PROJECT_DIR}/scripts/build.sh" || \
-    fail "la ISO seed debe usar el nombre fijo solicitado"
+grep -q 'iso_name="${REGION_ID:+${REGION_ID}-}20260901222621"' "${PROJECT_DIR}/scripts/build.sh" || \
+    fail "la ISO seed debe conservar el nombre fijo, con REGION_ID como prefijo opcional"
 
 OUTPUT_DIR="${tmp_dir}/output"
 stub_bin_dir="${tmp_dir}/bin"
@@ -204,7 +212,6 @@ phase_install_and_customize() { echo "phase_install_and_customize" >> "${phase_l
 phase_trim() { echo "phase_trim" >> "${phase_log}"; }
 phase_pack_runtime() { echo "phase_pack_runtime" >> "${phase_log}"; }
 phase_build_iso() { echo "phase_build_iso" >> "${phase_log}"; }
-phase_publish_update() { echo "phase_publish_update" >> "${phase_log}"; }
 
 main
 assert_equals "$(cat <<'EOF'
@@ -219,42 +226,17 @@ EOF
 
 build_runtime() { echo "build_runtime" >> "${target_log}"; }
 main() { echo "main" >> "${target_log}"; }
-phase_publish_update() { echo "phase_publish_update" >> "${target_log}"; }
 print_usage() { echo "print_usage" >> "${target_log}"; }
 
 run_build_target runtime
-run_build_target publish-update
 run_build_target help
 run_build_target full
 
 assert_equals "$(cat <<'EOF'
 build_runtime
-build_runtime
-phase_publish_update
 print_usage
 main
 EOF
 )" "$(cat "${target_log}")" "run_build_target dispatch"
-
-. "${PROJECT_DIR}/scripts/build.sh"
-
-UPDATES_DIR="${tmp_dir}/updates"
-RUNTIME_DIR="${tmp_dir}/runtime"
-mkdir -p "${RUNTIME_DIR}/${CONTEST_DIR}"
-printf 'kernel' > "${RUNTIME_DIR}/${CONTEST_DIR}/vmlinuz"
-printf 'initrd' > "${RUNTIME_DIR}/${CONTEST_DIR}/initrd.img"
-printf 'sqfs' > "${RUNTIME_DIR}/${CONTEST_DIR}/${ROOT_SQUASH_NAME}"
-printf 'grub-entry' > "${RUNTIME_DIR}/${CONTEST_DIR}/grub-entry.cfg"
-RUNTIME_VERSION="20260421010101"
-
-phase_publish_update
-
-assert_file "${UPDATES_DIR}/manifest.json"
-assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/vmlinuz"
-assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/initrd.img"
-assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/${ROOT_SQUASH_NAME}"
-assert_file "${UPDATES_DIR}/artifacts/${RUNTIME_VERSION}/grub-entry.cfg"
-assert_file "${UPDATES_DIR}/contest-${RUNTIME_VERSION}.torrent"
-assert_not_file "${UPDATES_DIR}/manifest.json.sig"
 
 echo "PASS: build.sh preserves helper staging and phase orchestration order."

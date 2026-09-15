@@ -1,11 +1,8 @@
 # Copy to config/iso.local.conf for a deployment. The destination is ignored by
 # Git. Keep private keys outside the repository and reference them by path.
 
-UPDATE_MANIFEST_URL="https://updates.example.invalid/manifest.json"
-UPDATE_CHECK_ON_BOOT="true"
+# Public half of the Ed25519 key contest-control.sh uses to verify the
+# control-server's signed commands (see control-server/README.md).
 UPDATE_SIGNATURE_PUBKEY_FILE="/secure/public/update-signing.pub"
 
 GRUB_ADMIN_PASSWORD_HASH="<grub.pbkdf2.sha512...>"
-
-# Used only by the release host. It must be an external root-owned 0600 file.
-UPDATE_SIGNING_PRIVATE_KEY_FILE="/secure/offline/update-signing.pem"

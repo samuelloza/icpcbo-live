@@ -1173,6 +1173,16 @@ mountroot() {
         panic "No se pudo montar overlay root"
     fi
 
+    # Restaura la ip del network que se asigno al mini-deploy
+    if [ -d "/run/contest-media${CONTEST_DIR}/network" ]; then
+        _log "Reponiendo perfiles de red del mini..."
+        mkdir -p "${rootmnt?}/etc/NetworkManager/system-connections"
+        cp "/run/contest-media${CONTEST_DIR}"/network/* \
+            "${rootmnt?}/etc/NetworkManager/system-connections/" 2>/dev/null || true
+        chown 0:0 "${rootmnt?}"/etc/NetworkManager/system-connections/* 2>/dev/null || true
+        chmod 600 "${rootmnt?}"/etc/NetworkManager/system-connections/* 2>/dev/null || true
+    fi
+
     for mp in dev proc sys run tmp; do
         [ -d "${rootmnt?}/${mp}" ] || mkdir -p "${rootmnt?}/${mp}"
     done
