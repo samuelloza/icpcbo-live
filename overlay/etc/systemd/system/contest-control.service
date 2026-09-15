@@ -1,0 +1,15 @@
+[Unit]
+Description=Contest remote control - long-poll signed commands + telemetry
+After=network-online.target contest-allowlist.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/contest-control.sh --loop
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

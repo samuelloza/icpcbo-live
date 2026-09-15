@@ -1,0 +1,10 @@
+[Unit]
+StartLimitIntervalSec=0
+# sin esto, 'systemctl start' repetido termina en "repeated too quickly"
+Description=Pantalla de bloqueo del concurso (mientras exista /run/contest-locked)
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/contest-lock-guard.sh
+Restart=on-failure
+RestartSec=3

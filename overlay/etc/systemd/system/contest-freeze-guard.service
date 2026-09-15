@@ -1,0 +1,10 @@
+[Unit]
+StartLimitIntervalSec=0
+# sin esto, 'systemctl start' repetido termina en "repeated too quickly"
+Description=Aviso "NO TOCAR" mientras el equipo esta congelado (donottouch)
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/contest-freeze-guard.sh
+Restart=on-failure
+RestartSec=3

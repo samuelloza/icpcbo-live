@@ -1,0 +1,14 @@
+[Unit]
+Description=Limpiar /home del concurso si el coordinador lo pidio
+After=local-fs.target
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/contest-reset-home.sh
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target
