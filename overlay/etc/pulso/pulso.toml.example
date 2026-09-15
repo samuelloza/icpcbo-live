@@ -1,0 +1,20 @@
+[servidor]
+host = "127.0.0.1"
+puerto = 8080
+
+[sampler]
+intervalo_segundos = 10
+
+[procesos]
+activo = true
+uid_minimo = 1000
+
+[pushgateway]
+# 29-pulso.sh reescribe esta linea en build time con PULSO_PUSHGATEWAY_URL
+# (config/iso.local.conf). Este archivo es solo referencia, no se lee en runtime.
+url = "http://pushgateway.example.invalid:9091"
+job = "pulso"
+instance = ""
+
+# Nivel de log: debug, info, warn, error
+nivel_log = "info"
