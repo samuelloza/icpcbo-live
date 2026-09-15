@@ -111,30 +111,21 @@ Construir y levantar la VM de prueba:
 sudo ./start.sh build-run
 ```
 
-## ISOs por región
+## Región
 
-Un ISO por región (La Paz, El Alto, Sucre, ...), cada uno con su `REGION_ID`.
-El id va en el nombre del archivo (`<id>-20260901222621.iso`), en
-`/etc/contestiso/region.env`, en `/etc/issue` y en `os-release` (`VARIANT_ID`).
-Si no se define `GROUP_ID`, se usa `REGION_ID` como identidad ante el
-control-server.
+Una sola ISO genérica sirve para todas las sedes: arranca enrolada en el
+grupo `lobby` (ver `control-server/groups.json.example`) y, cuando el equipo
+hace login, `contest-control.sh` la reasigna sola a la sede real que devuelve
+el login — no depende de qué USB físico llegó a qué lugar. `REGION_ID` normalmente
+queda vacío (default de `config/iso.conf`).
 
-Una sola región (env var):
+Solo hace falta definir `REGION_ID`/`REGION_NAME` para un build puntual ya
+atado a una sede (el id va en el nombre del archivo `<id>-20260901222621.iso`,
+en `/etc/contestiso/region.env`, en `/etc/issue` y en `os-release`):
 
 ```bash
 REGION_ID=lapaz REGION_NAME="La Paz" sudo -E ./scripts/build.sh seed
 ```
-
-Todas de una, desde un archivo:
-
-```bash
-cp config/regions.conf.example config/regions.conf   # editá id | Nombre | enroll_token
-sudo ./scripts/build-regions.sh                      # un ISO por línea
-```
-
-`config/regions.conf` está gitignored (puede llevar enroll tokens). El primer
-build hace debootstrap + paquetes; los siguientes reusan el caché del rootfs
-base y solo repiten squashfs + ISO.
 
 ## Escritorio
 
