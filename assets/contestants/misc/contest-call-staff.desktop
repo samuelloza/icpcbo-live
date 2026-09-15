@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Llamar al staff
+Comment=Avisa a un Staff
+Exec=/opt/icpc/bin/contest-call-staff.sh
+Icon=help-faq
+Terminal=false
+Categories=Utility;

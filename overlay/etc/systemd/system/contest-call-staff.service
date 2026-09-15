@@ -1,0 +1,7 @@
+[Unit]
+Description=Procesa las peticiones de "llamar al staff"
+After=contest-control.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/contest-call-staff-drain.sh

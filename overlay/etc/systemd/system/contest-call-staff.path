@@ -1,0 +1,9 @@
+[Unit]
+Description=Vigila el buzon de "llamar al staff"
+
+[Path]
+PathExistsGlob=/run/contest-call-staff/req-*
+Unit=contest-call-staff.service
+
+[Install]
+WantedBy=paths.target
