@@ -1,0 +1,18 @@
+# Alerta al control-server cuando aparece almacenamiento externo, un celular
+# (MTP/PTP) o tethering USB. No bloquea (eso lo hace modprobe.d + nftables),
+# solo avisa al panel del coordinador. systemd-run --no-block para no colgar udev.
+
+# Se detecta por la clase de interfaz (08 = mass storage) del descriptor USB,
+# no por el block device: con USB_STORAGE_DEFAULT=blocked el driver
+# usb_storage/uas nunca carga y jamas aparece un evento SUBSYSTEM=="block",
+# asi que esa deteccion nunca disparaba la alerta justo cuando mas importa.
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ENV{ID_USB_INTERFACES}=="*:08*:*", \
+  RUN+="/usr/bin/systemd-run --no-block /usr/local/sbin/contest-alert.sh usb.storage '%E{ID_VENDOR} %E{ID_MODEL}'"
+
+ACTION=="add", SUBSYSTEM=="usb", ENV{ID_MTP_DEVICE}=="1", \
+  RUN+="/usr/bin/systemd-run --no-block /usr/local/sbin/contest-alert.sh usb.phone '%E{ID_VENDOR} %E{ID_MODEL}'"
+ACTION=="add", SUBSYSTEM=="usb", ENV{ID_GPHOTO2}=="1", \
+  RUN+="/usr/bin/systemd-run --no-block /usr/local/sbin/contest-alert.sh usb.phone '%E{ID_VENDOR} %E{ID_MODEL}'"
+
+ACTION=="add", SUBSYSTEM=="net", ENV{ID_USB_DRIVER}=="rndis_host|cdc_ether|cdc_ncm|cdc_mbim", \
+  RUN+="/usr/bin/systemd-run --no-block /usr/local/sbin/contest-alert.sh usb.network '%E{ID_VENDOR} %E{ID_MODEL}'"

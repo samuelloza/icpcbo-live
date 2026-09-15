@@ -1,0 +1,14 @@
+[Unit]
+Description=Enable Disable USB Storage
+After=systemd-modules-load.service local-fs.target
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/contest-usb-storage.sh apply
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

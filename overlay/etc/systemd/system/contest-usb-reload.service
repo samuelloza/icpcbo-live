@@ -1,0 +1,11 @@
+[Unit]
+Description=Retry USB storage lockdown reload
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/contest-usb-storage.sh reload
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target
