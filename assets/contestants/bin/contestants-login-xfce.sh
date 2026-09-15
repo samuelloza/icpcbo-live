@@ -39,11 +39,17 @@ if [ -f "${AUTH_ENV_FILE}" ]; then
     source "${AUTH_ENV_FILE}"
 fi
 
+# User-Agent con etiqueta de site
+CONTEST_USER_AGENT="${CONTEST_USER_AGENT:-}"
+[ -f "${HTTP_ENV_FILE:-/etc/contestiso/http.env}" ] && \
+    source "${HTTP_ENV_FILE:-/etc/contestiso/http.env}"
+: "${CONTEST_USER_AGENT:=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36}"
+
 write_wallpaper() {
     local team_name="$1"
     local team_id="$2"
 
-    python3 "${WRITE_WALLPAPER_PY}" "${team_name}" "${team_id}" "${WALLPAPER_FILE}"
+    python3 "${WRITE_WALLPAPER_PY}" "${team_name}" "${team_id}" "${AUTH_LOGO_URL:-}" "${WALLPAPER_FILE}"
 }
 
 apply_wallpaper() {
@@ -107,6 +113,7 @@ authenticate() {
         --max-time "${AUTH_SERVICE_TIMEOUT}" \
         --output "${response_file}" \
         --write-out '%{http_code}' \
+        --user-agent "${CONTEST_USER_AGENT}" \
         --header 'Content-Type: application/json' \
         --data "${payload}" \
         "${AUTH_SERVICE_URL}")" || curl_rc=$?
@@ -135,12 +142,20 @@ authenticate() {
     persist_login_state \
         "${username}" "${AUTH_USER_ID}" "${AUTH_DISPLAY_NAME}" \
         "${AUTH_TEAM_ID}" "${AUTH_TEAM_NAME}" "${response_file}"
+    atomic_write "${AUTH_REGION_ID:-}" "${STATE_DIR}/region.txt"
+    atomic_write "${AUTH_REGION_NAME:-}" "${STATE_DIR}/region-name.txt"
+    if [ -n "${AUTH_REGION_ENROLL_TOKEN:-}" ]; then
+        atomic_write "${AUTH_REGION_ENROLL_TOKEN}" "${STATE_DIR}/region-enroll-token.txt"
+    fi
 
-    logger -p local0.info "ICPCBO-LOGIN: authenticated team_id=${AUTH_TEAM_ID}" || true
+    logger -p local0.info "ICPCBO-LOGIN: authenticated team_id=${AUTH_TEAM_ID} region=${AUTH_REGION_ID:-}" || true
 
     rm -f "${response_file}" "${env_file}"
     zenity --info "${ZEN_WIDTH}" --title "${ZEN_TITLE}" \
         --text="Inicio de sesión correcto para el equipo ${AUTH_TEAM_NAME}."
+    if [ -n "${AUTH_HOMEPAGE:-}" ]; then
+        firefox-esr --new-window "${AUTH_HOMEPAGE}" >/dev/null 2>&1 &
+    fi
     return 0
 }
 

@@ -6,6 +6,7 @@ import shlex
 import sys
 
 TEAM_ID_RE = re.compile(r"^(?!.*\.\.)[A-Za-z0-9._-]{1,64}$")
+HOMEPAGE_RE = re.compile(r"^https?://[^\s]+$")
 
 
 def first_value(data: dict, *keys: str) -> object | None:
@@ -81,6 +82,11 @@ def main() -> None:
     display_name = username
     team_id = ""
     team_name = ""
+    region_id = ""
+    region_name = ""
+    region_enroll_token = ""
+    homepage = ""
+    logo_url = ""
 
     if 200 <= http_code < 300:
         try:
@@ -113,6 +119,30 @@ def main() -> None:
                     except ValueError as exc:
                         ok = False
                         message = str(exc)
+                # Sede / región a la que pertenece el usuario. Opcional: si el
+                # servicio no la manda, el equipo sigue usando su GROUP_ID horneado.
+                region = data.get("region")
+                if not isinstance(region, dict):
+                    region = {}
+                rid = first_value(data, "regionId", "region_id", "sede", "site",
+                                  "groupId", "group_id") or first_value(region, "id", "regionId", "region_id")
+                rname = first_value(data, "regionName", "region_name") or first_value(region, "name")
+                rid = str(rid or "").strip()
+                region_id = rid if TEAM_ID_RE.fullmatch(rid) else ""
+                region_name = str(rname or "").strip()[:128]
+                # Token de enrolamiento de la sede (ISO genérico): el equipo se
+                # re-enrola en esa sede. Solo se acepta junto a una region válida.
+                rtok = first_value(region, "enrollToken", "enroll_token") \
+                    or first_value(data, "regionEnrollToken", "enroll_token")
+                region_enroll_token = str(rtok or "").strip()[:200] if region_id else ""
+                candidate = str(first_value(data, "homepage", "homePage", "home_page") or "").strip()
+                if (HOMEPAGE_RE.fullmatch(candidate)
+                        or candidate.startswith("file:///usr/share/doc/contest/")
+                        or candidate == "about:blank"):
+                    homepage = candidate
+                candidate = str(first_value(data, "logoUrl", "logo_url") or "").strip()
+                if HOMEPAGE_RE.fullmatch(candidate):
+                    logo_url = candidate
     else:
         message = f"El servicio respondió con HTTP {http_code}."
 
@@ -125,6 +155,11 @@ def main() -> None:
     print(f"AUTH_DISPLAY_NAME={shlex.quote(display_name)}")
     print(f"AUTH_TEAM_ID={shlex.quote(team_id)}")
     print(f"AUTH_TEAM_NAME={shlex.quote(team_name)}")
+    print(f"AUTH_REGION_ID={shlex.quote(region_id)}")
+    print(f"AUTH_REGION_NAME={shlex.quote(region_name)}")
+    print(f"AUTH_REGION_ENROLL_TOKEN={shlex.quote(region_enroll_token)}")
+    print(f"AUTH_HOMEPAGE={shlex.quote(homepage)}")
+    print(f"AUTH_LOGO_URL={shlex.quote(logo_url)}")
 
 
 if __name__ == "__main__":

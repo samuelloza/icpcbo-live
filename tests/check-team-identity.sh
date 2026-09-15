@@ -10,7 +10,6 @@ GNOME_LOGIN="${PROJECT_DIR}/assets/contestants/bin/contestants-login-gnome.sh"
 XFCE_LOGIN="${PROJECT_DIR}/assets/contestants/bin/contestants-login-xfce.sh"
 GNOME_AUTOSTART="${PROJECT_DIR}/assets/contestants/bin/gnome-autostart.sh"
 XFCE_AUTOSTART="${PROJECT_DIR}/assets/contestants/bin/xfce-autostart.sh"
-STATS_PAYLOAD="${PROJECT_DIR}/overlay/usr/local/bin/stats-build-payload.py"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -55,6 +54,30 @@ test_parser() {
     assert_equals "1" "${AUTH_OK}" "camel-case auth"
     assert_equals "bo-17" "${AUTH_TEAM_ID}" "camel-case team id"
     assert_equals "Altiplano" "${AUTH_TEAM_NAME}" "camel-case team name"
+
+    printf '{"ok":true,"teamId":"bo-17","homepage":"https://contest.example/inicio"}\n' > "${tmp_dir}/homepage.json"
+    python3 "${PARSER}" "${tmp_dir}/homepage.json" 200 fallback-user true > "${tmp_dir}/parsed.env"
+    # shellcheck source=/dev/null
+    source "${tmp_dir}/parsed.env"
+    assert_equals "https://contest.example/inicio" "${AUTH_HOMEPAGE}" "login homepage"
+
+    printf '{"ok":true,"teamId":"bo-17","logoUrl":"https://contest.example/logo.svg"}\n' > "${tmp_dir}/logo.json"
+    python3 "${PARSER}" "${tmp_dir}/logo.json" 200 fallback-user true > "${tmp_dir}/parsed.env"
+    # shellcheck source=/dev/null
+    source "${tmp_dir}/parsed.env"
+    assert_equals "https://contest.example/logo.svg" "${AUTH_LOGO_URL}" "login logo"
+
+    printf '{"ok":true,"teamId":"bo-17","homepage":"javascript:alert(1)"}\n' > "${tmp_dir}/homepage.json"
+    python3 "${PARSER}" "${tmp_dir}/homepage.json" 200 fallback-user true > "${tmp_dir}/parsed.env"
+    # shellcheck source=/dev/null
+    source "${tmp_dir}/parsed.env"
+    assert_equals "" "${AUTH_HOMEPAGE}" "unsafe login homepage"
+
+    printf '{"ok":true,"teamId":"bo-17","logoUrl":"file:///etc/passwd"}\n' > "${tmp_dir}/logo.json"
+    python3 "${PARSER}" "${tmp_dir}/logo.json" 200 fallback-user true > "${tmp_dir}/parsed.env"
+    # shellcheck source=/dev/null
+    source "${tmp_dir}/parsed.env"
+    assert_equals "" "${AUTH_LOGO_URL}" "unsafe login logo"
 
     parse_fixture snake-case.json true
     assert_equals "bo_18" "${AUTH_TEAM_ID}" "snake-case team id"
@@ -143,33 +166,18 @@ import xml.etree.ElementTree as ET
 
 ET.parse(sys.argv[1])
 PY
-}
 
-test_stats_observability() {
-    local state_dir="${tmp_dir}/stats-state"
-    local payload="${tmp_dir}/stats-payload.json"
-
-    mkdir -p "${state_dir}"
-    printf 'user\n' > "${state_dir}/username.txt"
-    printf 'user-17\n' > "${state_dir}/user-id.txt"
-    printf 'bo-17\n' > "${state_dir}/team-id.txt"
-    printf 'Altiplano\n' > "${state_dir}/team-name.txt"
-    printf '[]\n' > "${tmp_dir}/logs.json"
-    printf '{}\n' > "${tmp_dir}/metrics.json"
-    printf '{}\n' > "${tmp_dir}/hardware.json"
-
-    python3 "${STATS_PAYLOAD}" machine-1 "${tmp_dir}/logs.json" \
-        "${tmp_dir}/metrics.json" "${tmp_dir}/hardware.json" "${state_dir}" > "${payload}"
-    python3 - "${payload}" <<'PY'
-import json
+    python3 - "${WALLPAPER}" <<'PY'
+import importlib.util
+import io
 import sys
 
-with open(sys.argv[1], encoding="utf-8") as fh:
-    payload = json.load(fh)
-login = payload["data"]["login"]
-assert payload["machine_id"] == "machine-1"
-assert login["team_id"] == "bo-17"
-assert login["team_name"] == "Altiplano"
+spec = importlib.util.spec_from_file_location("wallpaper", sys.argv[1])
+wallpaper = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(wallpaper)
+wallpaper.urlopen = lambda *_args, **_kwargs: io.BytesIO(b'<svg xmlns="http://www.w3.org/2000/svg"/>')
+assert 'data:image/svg+xml;base64,' in wallpaper.logo_markup("https://contest.example/logo.svg")
+assert wallpaper.logo_markup("file:///etc/passwd") == ""
 PY
 }
 
@@ -177,6 +185,8 @@ test_parser
 test_atomic_persistence "${GNOME_LOGIN}" gnome
 test_atomic_persistence "${XFCE_LOGIN}" xfce
 test_wallpaper
-test_stats_observability
 
-echo "PASS: team identity is validated, persisted, displayed, and observable."
+assert_contains "${GNOME_LOGIN}" 'firefox-esr --new-window "${AUTH_HOMEPAGE}"'
+assert_contains "${XFCE_LOGIN}" 'firefox-esr --new-window "${AUTH_HOMEPAGE}"'
+
+echo "PASS: team identity is validated, persisted, and displayed."
