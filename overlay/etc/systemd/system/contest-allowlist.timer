@@ -1,0 +1,11 @@
+[Unit]
+Description=Refrescar allowlist del network
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=contest-allowlist.service
+
+[Install]
+WantedBy=timers.target

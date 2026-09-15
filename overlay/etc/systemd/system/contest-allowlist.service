@@ -1,0 +1,15 @@
+[Unit]
+Description=Contest network lockdown - resolve allowlist into nftables sets
+After=nftables.service network-online.target
+Wants=network-online.target nftables.service
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/contest-allowlist-apply.sh
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target
