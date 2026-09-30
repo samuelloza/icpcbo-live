@@ -144,6 +144,7 @@ authenticate() {
     # Sede / región del usuario 
     atomic_write "${AUTH_REGION_ID:-}" "${STATE_DIR}/region.txt"
     atomic_write "${AUTH_REGION_NAME:-}" "${STATE_DIR}/region-name.txt"
+    rm -f "${STATE_DIR}/region-enroll-token.txt"
     if [ -n "${AUTH_REGION_ENROLL_TOKEN:-}" ]; then
         atomic_write "${AUTH_REGION_ENROLL_TOKEN}" "${STATE_DIR}/region-enroll-token.txt"
     fi
@@ -152,7 +153,7 @@ authenticate() {
 
     rm -f "${response_file}" "${env_file}"
     zenity --info "${ZEN_WIDTH}" --title "${ZEN_TITLE}" \
-        --text="Inicio de sesión correcto para el equipo ${AUTH_TEAM_NAME}."
+        --text="${AUTH_MESSAGE:-Inicio de sesión correcto para el equipo ${AUTH_TEAM_NAME}.}"
     if [ -n "${AUTH_HOMEPAGE:-}" ]; then
         firefox-esr --new-window "${AUTH_HOMEPAGE}" >/dev/null 2>&1 &
     fi

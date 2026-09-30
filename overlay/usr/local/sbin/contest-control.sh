@@ -38,7 +38,6 @@ CONTEST_USER_AGENT=""
 : "${CONTEST_USER_AGENT:=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36}"
 
 [ -n "${CONTROL_SERVICE_URL}" ] || { log "CONTROL_SERVICE_URL vacio; nada que hacer"; exit 0; }
-[ -n "${GROUP_ID}" ] || { log "GROUP_ID vacio en ${IDENT_FILE}"; exit 0; }
 command -v curl >/dev/null 2>&1 || { log "curl no disponible"; exit 1; }
 [ -r "${CONTEST_CONTROL_PUBKEY}" ] || { log "falta la clave publica ${CONTEST_CONTROL_PUBKEY}"; exit 1; }
 
@@ -85,13 +84,13 @@ enroll() {
 }
 
 ensure_bearer() {
+    [ -n "${GROUP_ID}" ] && [ -n "${ENROLL_TOKEN}" ] || return 1
     [ -s "${BEARER_FILE}" ] || enroll || return 1
     BEARER="$(cat "${BEARER_FILE}")"
 }
 
-# ISO genérico: el equipo arranca enrolado en un grupo "lobby". Cuando el
-# concursante inicia sesion, el login deja en su home la sede + su enroll_token;
-# aqui la maquina se RE-ENROLA en esa sede para que su coordinador la maneje.
+# El login deja el grupo y el token en el home solo si el usuario tiene un
+# examen activo. Sin ellos la máquina permanece desconectada del control-server.
 LOGIN_STATE_DIR="${CONTEST_LOGIN_STATE_DIR:-/home/icpc/.local/state/icpcbo}"
 REGION_ENV="${CONTEST_REGION_ENV:-/etc/contestiso/region.env}"
 HTTP_ENV="${CONTEST_HTTP_ENV:-/etc/contestiso/http.env}"
@@ -134,6 +133,24 @@ maybe_reenroll() {
     log "re-enrolado en sede ${rid}"
     "${SBIN}/contest-session.sh" message \
         "Sede ${rname:-${rid}} activada. Si el navegador ya estaba abierto, cierralo y abrilo de nuevo." || true
+}
+
+maybe_deenroll() {
+    local rid tok_file
+    [ -f "${LOGIN_STATE_DIR}/region.txt" ] || return 0
+    rid="$(_read1 "${LOGIN_STATE_DIR}/region.txt" 64)"
+    tok_file="${LOGIN_STATE_DIR}/region-enroll-token.txt"
+    [ -z "${rid}" ] && [ ! -s "${tok_file}" ] || return 0
+
+    rm -f "${BEARER_FILE}"
+    BEARER=""; GROUP_ID=""; ENROLL_TOKEN=""
+    umask 077
+    { printf 'GROUP_ID=\n'; printf 'ENROLL_TOKEN=\n'; } > "${IDENT_FILE}"
+    umask 022; chmod 600 "${IDENT_FILE}"
+    { printf 'REGION_ID=\n'; printf 'REGION_NAME=\n'; } > "${REGION_ENV}"
+    chmod 644 "${REGION_ENV}"
+    rm -f "${LOGIN_STATE_DIR}/region.txt" "${LOGIN_STATE_DIR}/region-name.txt"
+    log "máquina desconectada: usuario autenticado sin examen activo"
 }
 
 # telemetria
@@ -466,23 +483,34 @@ poll_once() {
     return 1
 }
 
-ensure_bearer || exit 0
-maybe_reenroll   # sede persistida de una sesion anterior
-
-# El flag 'frozen' puede sobrevivir un reinicio (persistencia): repone el aviso.
-[ -e "${STATE_DIR}/frozen" ] && { systemctl start contest-freeze-guard.service 2>/dev/null || true; }
-
+maybe_deenroll
+maybe_reenroll
 if [ "${LOOP}" = "0" ]; then
+    [ -n "${GROUP_ID}" ] && ensure_bearer || exit 0
     send_status
     poll_once 0 || true
     exit 0
 fi
 
-log "loop de control iniciado (grupo ${GROUP_ID}, wait=${CONTROL_LONGPOLL_WAIT}s)"
+if [ -n "${GROUP_ID}" ]; then
+    ensure_bearer || true
+else
+    log "esperando login con examen activo; sin enrolamiento inicial"
+fi
+
+# El flag 'frozen' puede sobrevivir un reinicio (persistencia): repone el aviso.
+[ -e "${STATE_DIR}/frozen" ] && { systemctl start contest-freeze-guard.service 2>/dev/null || true; }
+
+log "loop de control iniciado; grupo=${GROUP_ID:-ninguno}"
 i=0
 while :; do
+    maybe_deenroll
     i=$(( i + 1 ))
     maybe_reenroll
+    if [ -z "${GROUP_ID}" ] || ! ensure_bearer; then
+        sleep 5
+        continue
+    fi
     [ $(( i % CONTROL_STATUS_EVERY )) -eq 0 ] && send_status
     [ $(( i % CONTROL_JOURNAL_EVERY )) -eq 0 ] && send_journal
     rc=0; poll_once "${CONTROL_LONGPOLL_WAIT}" || rc=$?
