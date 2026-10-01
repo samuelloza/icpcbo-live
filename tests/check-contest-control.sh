@@ -7,12 +7,14 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLIENT="${PROJECT_DIR}/overlay/usr/local/sbin/contest-control.sh"
 HOOK="${PROJECT_DIR}/scripts/setup.d/common/27-contest-control.sh"
 SVC="${PROJECT_DIR}/overlay/etc/systemd/system/contest-control.service"
+GUI="${PROJECT_DIR}/overlay/usr/local/lib/contest/gui.sh"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 command -v openssl >/dev/null 2>&1 || { echo "SKIP: openssl no disponible"; exit 0; }
 
 bash -n "${CLIENT}" || fail "syntax error en ${CLIENT}"
 bash -n "${HOOK}"   || fail "syntax error en ${HOOK}"
+bash -n "${GUI}"    || fail "syntax error en ${GUI}"
 bash -n "${PROJECT_DIR}/overlay/usr/local/sbin/contest-alert.sh"
 bash -n "${PROJECT_DIR}/overlay/usr/local/sbin/contest-net.sh"
 bash -n "${PROJECT_DIR}/overlay/usr/local/sbin/contest-lock-guard.sh"
@@ -20,6 +22,7 @@ grep -q 'systemctl enable contest-control.service' "${HOOK}" || fail "el hook de
 grep -q 'ExecStart=/usr/local/sbin/contest-control.sh --loop' "${SVC}" || fail "el servicio debe correr en modo --loop"
 grep -q 'CONTROL_SERVICE_URL=' "${PROJECT_DIR}/scripts/build.sh" || fail "build.sh debe pasar CONTROL_SERVICE_URL"
 grep -q 'LOCKSCREEN_PASSWORD' "${PROJECT_DIR}/scripts/build.sh" || fail "build.sh debe pasar LOCKSCREEN_PASSWORD"
+grep -q "printf 'DEFAULT_USER=%q" "${HOOK}" || fail "control.env debe recibir DEFAULT_USER"
 
 tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 key="${tmp}/k.key"; pub="${tmp}/k.pub"
@@ -48,7 +51,7 @@ write_curl() {  # payload_b64 sig_b64
 #!/usr/bin/env bash
 args="\$*"
 case "\$args" in
-  *X\ POST*/enroll*)  printf '{"bearer":"tok"}\n200' ;;
+  *X\ POST*/enroll*)  echo "\$args" >> "${tmp}/enroll.log"; printf '{"bearer":"tok"}\n200' ;;
   *X\ GET*/cmd/*)      printf '{"nonce":"N1","payload_b64":"$1","signature":"$2"}\n200' ;;
   *X\ POST*/ack*)      echo "\$args" >> "${tmp}/ack.log"; printf '{"ok":true}\n200' ;;
   *X\ POST*/status*)   echo status >> "${tmp}/status.log"; printf '{"ok":true}\n200' ;;
@@ -68,6 +71,7 @@ printf '#!/bin/sh\n:\n' > "${bin}/journalctl"
 for s in contest-session.sh contest-set-wallpaper.sh contest-net.sh contest-alert.sh contest-allowlist-apply.sh; do
     printf '#!/usr/bin/env bash\necho "%s $*" >> "%s"\n' "${s%.sh}" "${actions}" > "${sbin}/${s}"
 done
+sed -i '2i echo "${CONTEST_SESSION_USER:-}" > "'"${tmp}"'/session-user.log"' "${sbin}/contest-session.sh"
 cat > "${sbin}/contest-usb-storage.sh" <<EOF
 #!/usr/bin/env bash
 [ "\$1" = status ] && { echo blocked; exit 0; }
@@ -80,7 +84,10 @@ CONTROL_SERVICE_URL=http://control.test
 CONTROL_TIMEOUT=5
 CONTROL_LONGPOLL_WAIT=1
 ALLOW_VM=true
+DEFAULT_USER=patito
 EOF
+gui_user="$(CONTEST_CONTROL_ENV="${tmp}/control.env" bash -c '. "$1"; printf %s "${_gui_user}"' _ "${GUI}")"
+[ "${gui_user}" = patito ] || fail "gui.sh no usa DEFAULT_USER: ${gui_user}"
 printf 'GROUP_ID=lab-x\nENROLL_TOKEN=tok\n' > "${tmp}/identity.env"
 
 run() {
@@ -88,7 +95,8 @@ run() {
     CONTEST_CONTROL_ENV="${tmp}/control.env" CONTEST_CONTROL_IDENTITY="${tmp}/identity.env" \
     CONTEST_CONTROL_STATE="${state}" CONTEST_CONTROL_PUBKEY="${pub}" \
     CONTEST_MACHINE_ID_CMD="${bin}/machine-id" CONTEST_CONTROL_SBIN="${sbin}" \
-    CONTEST_BINDING_FILE="${tmp}/binding.env" \
+    CONTEST_BINDING_FILE="${tmp}/binding.env" CONTEST_LOGIN_STATE_DIR="${tmp}/login" \
+    CONTEST_REGION_ENV="${tmp}/region.env" CONTEST_HTTP_ENV="${tmp}/http.env" \
         bash "${CLIENT}"
 }
 
@@ -96,6 +104,7 @@ run() {
 IFS='|' read -r P S <<< "$(mk_cmd message)"; write_curl "${P}" "${S}"
 run
 grep -qx 'contest-session message hola' "${actions}" || fail "no despacho message: $(cat "${actions}")"
+grep -qx 'patito' "${tmp}/session-user.log" || fail "no propago DEFAULT_USER a los comandos de escritorio"
 grep -q '"status": "ok"\|"status":"ok"' "${tmp}/ack.log" || fail "no hizo ack ok"
 [ -s "${tmp}/status.log" ] || fail "no mando telemetria (status)"
 [ -f "${state}/applied/N1" ] || fail "no marco el nonce aplicado"
@@ -122,5 +131,17 @@ write_curl "${P}" "$(printf '%s' "${S}" | tr 'A-Za-z' 'N-ZA-Mn-za-m')"
 run
 [ -s "${actions}" ] && fail "ejecuto un comando con firma invalida"
 [ -f "${state}/applied/N1" ] && fail "marco aplicado un comando con firma invalida"
+
+# ISO genérica: aun con GROUP_ID vacío debe leer la sede dejada por el login.
+rm -rf "${state}" "${tmp}/login"; mkdir -p "${state}" "${tmp}/login"
+printf 'GROUP_ID=\nENROLL_TOKEN=\n' > "${tmp}/identity.env"
+printf 'lab-x\n' > "${tmp}/login/region.txt"
+printf 'Laboratorio X\n' > "${tmp}/login/region-name.txt"
+printf 'tok\n' > "${tmp}/login/region-enroll-token.txt"
+: > "${tmp}/enroll.log"
+run
+grep -q '"group_id": "lab-x"\|"group_id":"lab-x"' "${tmp}/enroll.log" \
+    || fail "no enroló usando la sede del login"
+grep -qx 'GROUP_ID=lab-x' "${tmp}/identity.env" || fail "no persistió GROUP_ID de la sede"
 
 echo "PASS: contest-control"

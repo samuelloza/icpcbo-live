@@ -188,5 +188,8 @@ test_wallpaper
 
 assert_contains "${GNOME_LOGIN}" 'firefox-esr --new-window "${AUTH_HOMEPAGE}"'
 assert_contains "${XFCE_LOGIN}" 'firefox-esr --new-window "${AUTH_HOMEPAGE}"'
+if grep -q '/home/icpc' "${GNOME_LOGIN}" "${XFCE_LOGIN}" "${GNOME_AUTOSTART}" "${XFCE_AUTOSTART}"; then
+    fail "los scripts de sesión no deben fijar /home/icpc"
+fi
 
 echo "PASS: team identity is validated, persisted, and displayed."

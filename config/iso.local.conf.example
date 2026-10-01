@@ -1,8 +1,0 @@
-# Copy to config/iso.local.conf for a deployment. The destination is ignored by
-# Git. Keep private keys outside the repository and reference them by path.
-
-# Public half of the Ed25519 key contest-control.sh uses to verify the
-# control-server's signed commands (see control-server/README.md).
-UPDATE_SIGNATURE_PUBKEY_FILE="/secure/public/update-signing.pub"
-
-GRUB_ADMIN_PASSWORD_HASH="<grub.pbkdf2.sha512...>"

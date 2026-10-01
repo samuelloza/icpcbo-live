@@ -5,7 +5,7 @@ set -euo pipefail
 # OJO: NO usar ${1:?...{...}...} — bash cierra el ${} en la primera '}' del
 # mensaje y deja una '}' literal pegada a $1 (ACTION queda "lock}", etc.).
 ACTION="${1:-}"
-[ -n "${ACTION}" ] || { echo "uso: contest-session.sh lock|unlock|message <texto>" >&2; exit 2; }
+[ -n "${ACTION}" ] || { echo "uso: contest-session.sh lock|unlock|message <texto>|logout" >&2; exit 2; }
 USER_NAME="${CONTEST_SESSION_USER:-icpc}"
 LOCK_FLAG="${CONTEST_LOCK_FLAG:-/run/contest-locked}"
 
@@ -33,6 +33,13 @@ case "${ACTION}" in
         notify_user "${text}" "Coordinador ICPC" || exit 1
         run_user zenity --info --no-wrap --title "ICPC Bolivia" \
             --text "${text}" >/dev/null 2>&1 &
+        ;;
+    logout)
+        # Borra el estado de login (team-id.txt, etc.) y termina la sesion:
+        # al reiniciarla, el autostart la encuentra vacia y vuelve a pedir
+        # credenciales (ver gnome-autostart.sh / xfce-autostart.sh).
+        rm -rf "/home/${USER_NAME}/.local/state/icpcbo"
+        loginctl terminate-user "${USER_NAME}" 2>/dev/null || true
         ;;
     *)
         echo "accion invalida: ${ACTION}" >&2

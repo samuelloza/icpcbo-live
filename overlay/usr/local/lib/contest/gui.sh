@@ -2,7 +2,10 @@
 # Helpers para hablar con la sesion grafica del usuario del concurso desde root.
 # GNOME corre en Wayland: no basta DISPLAY=:0, hace falta el WAYLAND_DISPLAY real.
 
-_gui_user="${CONTEST_SESSION_USER:-icpc}"
+DEFAULT_USER=""
+# shellcheck source=/dev/null
+[ -r "${CONTEST_CONTROL_ENV:-/etc/contestiso/control.env}" ] && . "${CONTEST_CONTROL_ENV:-/etc/contestiso/control.env}"
+_gui_user="${CONTEST_SESSION_USER:-${DEFAULT_USER:-icpc}}"
 _gui_uid="$(id -u "${_gui_user}" 2>/dev/null || echo 1000)"
 _gui_xdg="/run/user/${_gui_uid}"
 _gui_bus="unix:path=${_gui_xdg}/bus"

@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStartPre=/usr/bin/chmod +x /usr/local/bin/pulso
-ExecStart=/usr/local/bin/pulso --config /etc/pulso/pulso.toml
+ExecStart=/bin/sh -c 'exec env PULSO_PUSHGATEWAY_INSTANCE="$(cat /etc/machine-id)" /usr/local/bin/pulso --config /etc/pulso/pulso.toml'
 Restart=always
 RestartSec=10
 NoNewPrivileges=yes

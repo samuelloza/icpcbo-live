@@ -19,6 +19,12 @@ update-locale LANG="${LOCALE}"
 ln -sf "/usr/share/zoneinfo/${TIMEZONE}" /etc/localtime
 echo "${TIMEZONE}" > /etc/timezone
 
+if [ "${HWCLOCK_LOCAL:-true}" = "true" ]; then
+    printf '0.0 0 0.0\n0\nLOCAL\n' > /etc/adjtime
+else
+    printf '0.0 0 0.0\n0\nUTC\n' > /etc/adjtime
+fi
+
 # Distribución de teclado para consola y X11
 # (leída por keyboard-setup.service durante el arranque)
 cat > /etc/default/keyboard <<KEYBOARD_EOF

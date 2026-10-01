@@ -8,7 +8,7 @@ OUT="${1:?uso: contest-screenshot.sh <salida.png>}"
 # shellcheck source=/dev/null
 . "${CONTEST_GUI_LIB:-/usr/local/lib/contest/gui.sh}"
 
-user_tmp="/run/user/$(id -u "${CONTEST_SESSION_USER:-icpc}")/.contest-shot.png"
+user_tmp="/run/user/${_gui_uid}/.contest-shot.png"
 
 run_user sh -c '
     rm -f "$1"

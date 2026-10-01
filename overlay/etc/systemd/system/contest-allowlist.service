@@ -6,7 +6,6 @@ Before=display-manager.service
 
 [Service]
 Type=oneshot
-RemainAfterExit=yes
 ExecStart=/usr/local/sbin/contest-allowlist-apply.sh
 StandardOutput=journal+console
 StandardError=journal+console

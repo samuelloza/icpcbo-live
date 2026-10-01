@@ -17,6 +17,7 @@ done
     printf 'CONTROL_STATUS_EVERY=%q\n' "${CONTROL_STATUS_EVERY:-1}"
     printf 'CONTROL_JOURNAL_EVERY=%q\n' "${CONTROL_JOURNAL_EVERY:-20}"
     printf 'ALLOW_VM=%q\n' "${ALLOW_VM:-false}"
+    printf 'DEFAULT_USER=%q\n' "${DEFAULT_USER}"
 } > /etc/contestiso/control.env
 chmod 0644 /etc/contestiso/control.env
 

@@ -25,9 +25,11 @@ CONTROL_LONGPOLL_WAIT="25"
 CONTROL_STATUS_EVERY="1"
 CONTROL_JOURNAL_EVERY="20"
 ALLOW_VM="false"
+DEFAULT_USER=""
 CONTEST_CONTROL_PUBKEY="${CONTEST_CONTROL_PUBKEY:-/usr/share/contest/keys/update-signing.pub}"
 # shellcheck source=/dev/null
 [ -r "${ENV_FILE}" ] && . "${ENV_FILE}"
+export CONTEST_SESSION_USER="${CONTEST_SESSION_USER:-${DEFAULT_USER:-icpc}}"
 GROUP_ID=""
 ENROLL_TOKEN=""
 # shellcheck source=/dev/null
@@ -38,7 +40,6 @@ CONTEST_USER_AGENT=""
 : "${CONTEST_USER_AGENT:=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36}"
 
 [ -n "${CONTROL_SERVICE_URL}" ] || { log "CONTROL_SERVICE_URL vacio; nada que hacer"; exit 0; }
-[ -n "${GROUP_ID}" ] || { log "GROUP_ID vacio en ${IDENT_FILE}"; exit 0; }
 command -v curl >/dev/null 2>&1 || { log "curl no disponible"; exit 1; }
 [ -r "${CONTEST_CONTROL_PUBKEY}" ] || { log "falta la clave publica ${CONTEST_CONTROL_PUBKEY}"; exit 1; }
 
@@ -92,7 +93,13 @@ ensure_bearer() {
 # ISO genérico: el equipo arranca enrolado en un grupo "lobby". Cuando el
 # concursante inicia sesion, el login deja en su home la sede + su enroll_token;
 # aqui la maquina se RE-ENROLA en esa sede para que su coordinador la maneje.
-LOGIN_STATE_DIR="${CONTEST_LOGIN_STATE_DIR:-/home/icpc/.local/state/icpcbo}"
+if [ -n "${CONTEST_LOGIN_STATE_DIR:-}" ]; then
+    LOGIN_STATE_DIR="${CONTEST_LOGIN_STATE_DIR}"
+else
+    LOGIN_HOME="$(getent passwd "${DEFAULT_USER}" | cut -d: -f6)"
+    [ -n "${LOGIN_HOME}" ] || { log "DEFAULT_USER '${DEFAULT_USER}' no existe"; exit 1; }
+    LOGIN_STATE_DIR="${LOGIN_HOME}/.local/state/icpcbo"
+fi
 REGION_ENV="${CONTEST_REGION_ENV:-/etc/contestiso/region.env}"
 HTTP_ENV="${CONTEST_HTTP_ENV:-/etc/contestiso/http.env}"
 UA_BASE='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
@@ -134,6 +141,20 @@ maybe_reenroll() {
     log "re-enrolado en sede ${rid}"
     "${SBIN}/contest-session.sh" message \
         "Sede ${rname:-${rid}} activada. Si el navegador ya estaba abierto, cierralo y abrilo de nuevo." || true
+}
+
+# La homepage que entrega el login (tabla group_config del control-server) solo
+# abre una ventana una vez; sin esto nunca queda fijada en icpcbo.cfg, asi que
+# un reinicio de Firefox (o de la maquina, que resetea icpcbo.cfg del squashfs)
+# vuelve al default de fabrica. homepage.txt vive en el home (persiste); el
+# marker vive en STATE_DIR (no persiste), asi que tras cada reinicio se
+# reaplica sola en el primer ciclo del loop.
+maybe_apply_homepage() {
+    local hp mark="${STATE_DIR}/homepage-applied"
+    hp="$(_read1 "${LOGIN_STATE_DIR}/homepage.txt" 512)"
+    [ -n "${hp}" ] || return 0
+    [ "$(_read1 "${mark}" 512)" = "${hp}" ] && return 0
+    "${SBIN}/contest-set-homepage.sh" "${hp}" >/dev/null 2>&1 && printf '%s' "${hp}" > "${mark}"
 }
 
 # telemetria
@@ -334,6 +355,7 @@ PY
     case "${CMD_ACTION}" in
         lock)          "${SBIN}/contest-session.sh" lock                 || status=error ;;
         unlock)        "${SBIN}/contest-session.sh" unlock              || status=error ;;
+        logout)        "${SBIN}/contest-session.sh" logout              || status=error ;;
         message)       "${SBIN}/contest-session.sh" message "$(arg text)" || status=error ;;
         set-wallpaper) "${SBIN}/contest-set-wallpaper.sh" "$(arg url)"    || status=error ;;
         usb-block)     "${SBIN}/contest-usb-storage.sh" block            || status=error ;;
@@ -392,7 +414,7 @@ open("/etc/contestiso/http.env","w").write("CONTEST_USER_AGENT="+shlex.quote(ua)
             #   .cache, .mozilla, .vscode, .git, etc.
             #   node_modules queda fuera: es regenerable y puede reventar el tope.
             tb="$(mktemp --suffix=.tgz)"
-            hu="${CONTEST_HOME_USER:-icpc}"
+            hu="${CONTEST_HOME_USER:-${DEFAULT_USER:-icpc}}"
             tid="$(_read1 "${LOGIN_STATE_DIR}/team-id.txt" 64)"
             tar czf "${tb}" -C /home \
                 --exclude='.*' --exclude='*/.*' --exclude='node_modules' \
@@ -466,8 +488,10 @@ poll_once() {
     return 1
 }
 
-ensure_bearer || exit 0
 maybe_reenroll   # sede persistida de una sesion anterior
+[ -n "${GROUP_ID}" ] || { log "GROUP_ID vacio y el login aun no asigno una sede"; exit 0; }
+ensure_bearer || exit 0
+maybe_apply_homepage
 
 # El flag 'frozen' puede sobrevivir un reinicio (persistencia): repone el aviso.
 [ -e "${STATE_DIR}/frozen" ] && { systemctl start contest-freeze-guard.service 2>/dev/null || true; }
@@ -483,6 +507,7 @@ i=0
 while :; do
     i=$(( i + 1 ))
     maybe_reenroll
+    maybe_apply_homepage
     [ $(( i % CONTROL_STATUS_EVERY )) -eq 0 ] && send_status
     [ $(( i % CONTROL_JOURNAL_EVERY )) -eq 0 ] && send_journal
     rc=0; poll_once "${CONTROL_LONGPOLL_WAIT}" || rc=$?

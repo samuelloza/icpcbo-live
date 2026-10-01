@@ -1,0 +1,15 @@
+[Unit]
+Description=Reset PCI wifi controllers that fail to link on cold boot
+After=systemd-modules-load.service local-fs.target
+Before=network-pre.target NetworkManager.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/contest-wifi-pci-reset.sh
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

@@ -5,30 +5,19 @@ set -euo pipefail
 ZEN_TITLE="ICPC Bolivia"
 ZEN_WIDTH="--width=420"
 
-STATE_FILE="/home/icpc/.local/state/icpcbo/user-id.txt"
-USERNAME_FILE="/home/icpc/.local/state/icpcbo/username.txt"
-DISPLAY_FILE="/home/icpc/.local/state/icpcbo/display-name.txt"
-TEAM_ID_FILE="/home/icpc/.local/state/icpcbo/team-id.txt"
-TEAM_NAME_FILE="/home/icpc/.local/state/icpcbo/team-name.txt"
-RAW_RESPONSE_FILE="/home/icpc/.local/state/icpcbo/auth-response.json"
-WALLPAPER_FILE="/home/icpc/.local/state/icpcbo/login-wallpaper.svg"
+STATE_DIR="${CONTEST_LOGIN_STATE_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/icpcbo}"
+STATE_FILE="${STATE_DIR}/user-id.txt"
+USERNAME_FILE="${STATE_DIR}/username.txt"
+DISPLAY_FILE="${STATE_DIR}/display-name.txt"
+TEAM_ID_FILE="${STATE_DIR}/team-id.txt"
+TEAM_NAME_FILE="${STATE_DIR}/team-name.txt"
+RAW_RESPONSE_FILE="${STATE_DIR}/auth-response.json"
+WALLPAPER_FILE="${STATE_DIR}/login-wallpaper.svg"
 
 AUTH_ENV_FILE="/etc/contestiso/auth.env"
 BUILD_PAYLOAD_PY="/opt/icpc/bin/contestants-login-build-payload.py"
 PARSE_RESPONSE_PY="/opt/icpc/bin/contestants-login-parse-response.py"
 WRITE_WALLPAPER_PY="/opt/icpc/bin/contestants-login-write-wallpaper.py"
-
-if [ -n "${CONTEST_LOGIN_STATE_DIR:-}" ]; then
-    STATE_FILE="${CONTEST_LOGIN_STATE_DIR}/user-id.txt"
-    USERNAME_FILE="${CONTEST_LOGIN_STATE_DIR}/username.txt"
-    DISPLAY_FILE="${CONTEST_LOGIN_STATE_DIR}/display-name.txt"
-    TEAM_ID_FILE="${CONTEST_LOGIN_STATE_DIR}/team-id.txt"
-    TEAM_NAME_FILE="${CONTEST_LOGIN_STATE_DIR}/team-name.txt"
-    RAW_RESPONSE_FILE="${CONTEST_LOGIN_STATE_DIR}/auth-response.json"
-    WALLPAPER_FILE="${CONTEST_LOGIN_STATE_DIR}/login-wallpaper.svg"
-fi
-
-STATE_DIR="$(dirname "${STATE_FILE}")"
 
 AUTH_SERVICE_URL="${AUTH_SERVICE_URL:-}"
 AUTH_SERVICE_TIMEOUT="${AUTH_SERVICE_TIMEOUT:-5}"
@@ -154,6 +143,9 @@ authenticate() {
     zenity --info "${ZEN_WIDTH}" --title "${ZEN_TITLE}" \
         --text="Inicio de sesión correcto para el equipo ${AUTH_TEAM_NAME}."
     if [ -n "${AUTH_HOMEPAGE:-}" ]; then
+        # contest-control (root) lee esto y fija la homepage real de Firefox;
+        # el login no tiene permiso de escritura sobre icpcbo.cfg.
+        atomic_write "${AUTH_HOMEPAGE}" "${STATE_DIR}/homepage.txt"
         firefox-esr --new-window "${AUTH_HOMEPAGE}" >/dev/null 2>&1 &
     fi
     return 0

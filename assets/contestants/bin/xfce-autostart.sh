@@ -3,8 +3,9 @@
 set -euo pipefail
 
 CONFIG_FILE="/opt/icpc/misc/config"
-STATE_FILE="/home/icpc/.local/state/icpcbo/team-id.txt"
-WALLPAPER_FILE="/home/icpc/.local/state/icpcbo/login-wallpaper.svg"
+STATE_DIR="${CONTEST_LOGIN_STATE_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/icpcbo}"
+STATE_FILE="${STATE_DIR}/team-id.txt"
+WALLPAPER_FILE="${STATE_DIR}/login-wallpaper.svg"
 
 DOSETUP=1
 
